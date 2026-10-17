@@ -11,6 +11,7 @@ pub mod encode;
 pub mod folder;
 pub mod format;
 pub mod metadata;
+pub mod passport;
 pub mod resize;
 
 pub use decode::{DecodeOptions, Decoded, decode_file};

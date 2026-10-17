@@ -19,6 +19,11 @@ fn main() -> ExitCode {
             args.remove(0);
             cli::run_convert(args)
         }
+        Some("passport") => {
+            platform::attach_console();
+            args.remove(0);
+            cli::run_passport(args)
+        }
         Some("info") => {
             platform::attach_console();
             args.remove(0);

@@ -95,6 +95,7 @@ Chitra lists the rest of the folder and you move through it with the keyboard.
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy file path |
 | Ctrl+O / Ctrl+Shift+O | Open file / open folder |
 | Ctrl+S | Convert dialog |
+| Ctrl+P | Passport photo |
 | Ctrl+, | Settings |
 | F5 | Refresh folder |
 | F1 | Shortcut list |
@@ -165,6 +166,47 @@ Conversions run in parallel, write through a temporary file (so a failure
 never leaves a half-written file or damages an input being overwritten), and
 end with a report listing any failures. EXIF orientation is applied to the
 pixels and reset in the copied EXIF, so outputs always display upright.
+
+## Passport photos
+
+**Passport** in the toolbar (or `Ctrl+P`) turns the current photo into a
+passport or visa photo. Click the top of the head (the crown, not the top of
+the hair), then the bottom of the chin; drag either marker to adjust, or
+right-click to start again. Chitra scales the head to the middle of the
+allowed size, straightens a tilted head, centres it, and shows a live preview
+with the head guides drawn on it. Then save either:
+
+- a **print sheet** at 300 dpi with grey cutting guides on 6 x 4 in,
+  15 x 10 cm, 7 x 5 in, A4 or US Letter paper (for example 8 UK photos on a
+  6 x 4 in print), or
+- **one photo** as a JPEG for online applications, at the official pixel size
+  where there is one (India 630 x 810, US 1200 x 1200) and 600 dpi otherwise.
+
+Files are JPEGs tagged with their print resolution, so printing at actual
+size gives the right physical size, and carry no EXIF (no location or camera
+data). A slider moves the head size within the allowed range, and any area
+the photo does not cover is filled with a colour you pick.
+
+| ID | Photo | Size | Head (chin to crown) |
+|---|---|---|---|
+| `uk` | United Kingdom passport | 35 x 45 mm | 29-34 mm |
+| `eu` | EU passport / Schengen visa | 35 x 45 mm | 32-36 mm |
+| `us` | United States passport / visa | 2 x 2 in | 1-1 3/8 in |
+| `india` | India passport (2025 rules) | 35 x 45 mm | 36-38 mm |
+| `india-visa` | India visa / OCI | 2 x 2 in | 1-1 3/8 in |
+| `canada` | Canada passport | 50 x 70 mm | 31-36 mm |
+| `australia` | Australia passport | 35 x 45 mm | 32-36 mm |
+| `china` | China passport / visa | 33 x 48 mm | 28-33 mm |
+| `japan` | Japan passport | 35 x 45 mm | 32-36 mm |
+
+Rules change, so check the current ones of the office you apply to. The same
+works from a terminal, given the two points in pixels:
+
+```
+chitra-cli passport me.jpg --country uk --crown 1520,610 --chin 1530,1640 --sheet 6x4
+chitra-cli passport me.jpg --country india --crown 1520,610 --chin 1530,1640 -o upload.jpg
+chitra-cli passport --list
+```
 
 ## Builds and licences
 

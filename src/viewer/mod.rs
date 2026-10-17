@@ -1,10 +1,12 @@
 //! The viewer: single-photo view with zoom/pan/rotate, a thumbnail browser,
-//! an info panel and the convert dialog, built on egui/eframe (OpenGL).
+//! an info panel, the convert dialog and the passport photo maker, built on
+//! egui/eframe (OpenGL).
 
 mod convert_dialog;
 mod desktop_theme;
 mod headerbar;
 mod loader;
+mod passport_dialog;
 mod settings;
 mod util;
 
@@ -22,6 +24,7 @@ use chitra::format::Format;
 use convert_dialog::ConvertDialog;
 use desktop_theme::DesktopTheme;
 use loader::{Kind, LoadedImage, Loader, Request};
+use passport_dialog::PassportDialog;
 use settings::{SLIDESHOW_SECS, Settings, THUMB_SIZES, Theme, WheelMode};
 use util::{format_time, human_bytes};
 
@@ -148,6 +151,7 @@ struct App {
     confirm_delete: Option<PathBuf>,
     toast: Option<(String, Instant)>,
     convert: ConvertDialog,
+    passport: PassportDialog,
 
     grid_offset: f32,
     grid_view_h: f32,
@@ -205,6 +209,7 @@ impl App {
             confirm_delete: None,
             toast: None,
             convert: ConvertDialog::default(),
+            passport: PassportDialog::default(),
             grid_offset: 0.0,
             grid_view_h: 0.0,
             grid_follow: false,
@@ -675,6 +680,9 @@ impl App {
         if key(cmd, Key::S) {
             self.convert.open = true;
         }
+        if key(cmd, Key::P) {
+            self.passport.open_on(self.current_path());
+        }
         if key(cmd, Key::Q) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -740,6 +748,8 @@ impl App {
                 self.show_help = false;
             } else if self.show_settings {
                 self.show_settings = false;
+            } else if self.passport.open {
+                self.passport.open = false;
             } else if self.convert.open {
                 self.convert.open = false;
             } else if self.slideshow.is_some() {
@@ -1018,6 +1028,13 @@ impl App {
                 .clicked()
             {
                 self.convert.open = true;
+            }
+            if ui
+                .add_enabled(has, egui::Button::new("Passport"))
+                .on_hover_text("Passport or visa photo from this photo (Ctrl+P)")
+                .clicked()
+            {
+                self.passport.open_on(self.current_path());
             }
             if ui
                 .add_enabled(has, egui::Button::new("Delete"))
@@ -1679,6 +1696,11 @@ impl App {
             self.convert.finished = false;
             self.rescan();
         }
+        self.passport.show(ctx);
+        if self.passport.saved {
+            self.passport.saved = false;
+            self.rescan();
+        }
 
         if let Some(path) = self.confirm_delete.clone() {
             let mut confirm = false;
@@ -1907,6 +1929,7 @@ const HELP: &[(&str, &str)] = &[
     ("Ctrl+C / Ctrl+Shift+C", "Copy image / copy path"),
     ("Ctrl+O / Ctrl+Shift+O", "Open file / folder"),
     ("Ctrl+S", "Convert (batch)"),
+    ("Ctrl+P", "Passport / visa photo"),
     ("Ctrl+,", "Settings (slideshow, mouse, sorting, theme)"),
     ("F5", "Refresh folder"),
     ("Esc", "Leave full screen, close, quit"),
