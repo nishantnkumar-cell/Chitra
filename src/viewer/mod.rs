@@ -1587,9 +1587,8 @@ impl App {
                             );
                         }
                         let cover = photos.first().and_then(|e| thumbs.get(&e.path));
-                        let picture = paint_thumb(&painter, rect, thumb_size, cover);
                         let hidden = total.saturating_sub(photos.len().min(per_row));
-                        paint_folder_badge(&painter, picture, hidden);
+                        paint_folder_tile(&painter, rect, thumb_size, cover, hidden);
                         paint_caption(&painter, rect, name.to_string(), ui.visuals().text_color());
                         if resp.on_hover_text(format!("Browse {name}")).clicked() {
                             action = Some(OverviewAction::Browse(dir.map(Path::to_path_buf)));
@@ -1988,48 +1987,118 @@ impl eframe::App for App {
     }
 }
 
-/// "Open folder" across the bottom of a folder tile's cover photo, with how
-/// many photos the row could not show.
-fn paint_folder_badge(painter: &egui::Painter, picture: Rect, hidden: usize) {
-    let lines: f32 = if hidden > 0 { 2.0 } else { 1.0 };
-    let band = Rect::from_min_max(
-        Pos2::new(
-            picture.min.x,
-            picture.max.y - (8.0 + 18.0 * lines).min(picture.height()),
-        ),
-        picture.max,
+/// A folder tile: the cover photo tucked into an open folder, drawn about a
+/// fifth smaller than a photo tile, with "Open folder" and how many photos the
+/// row could not show on the folder's front.
+fn paint_folder_tile(
+    painter: &egui::Painter,
+    cell: Rect,
+    size: f32,
+    cover: Option<&Slot>,
+    hidden: usize,
+) {
+    let dark = painter.ctx().theme() == egui::Theme::Dark;
+    let (back, front, edge, ink) = if dark {
+        (
+            Color32::from_rgb(0xA8, 0x7A, 0x22),
+            Color32::from_rgb(0xD9, 0xA4, 0x3A),
+            Color32::from_rgb(0xF0, 0xC2, 0x62),
+            Color32::from_gray(25),
+        )
+    } else {
+        (
+            Color32::from_rgb(0xD9, 0xA0, 0x35),
+            Color32::from_rgb(0xF5, 0xC4, 0x55),
+            Color32::from_rgb(0xFB, 0xDC, 0x8C),
+            Color32::from_gray(45),
+        )
+    };
+    let s = size * 0.8;
+    let folder = Rect::from_center_size(
+        Pos2::new(cell.center().x, cell.min.y + 4.0 + size / 2.0 + s * 0.05),
+        Vec2::new(s, s * 0.8),
     );
-    painter.rect_filled(
-        band,
-        egui::CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: 4,
-            se: 4,
-        },
-        Color32::from_black_alpha(170),
+    let r = (s * 0.04).max(2.0);
+
+    // Back panel with its tab.
+    let tab = Rect::from_min_size(
+        folder.min - Vec2::new(0.0, s * 0.1),
+        Vec2::new(s * 0.42, s * 0.1 + r * 2.0),
     );
+    painter.rect_filled(tab, r, back);
+    painter.rect_filled(folder, r, back);
+
+    // The photo, standing inside and rising above the back panel.
+    let slot = Rect::from_min_max(
+        Pos2::new(folder.min.x + s * 0.1, folder.min.y - s * 0.03),
+        Pos2::new(folder.max.x - s * 0.1, folder.max.y - s * 0.12),
+    );
+    match cover {
+        Some(Slot::Ready(img)) => {
+            let [tw, th] = img.tex_size;
+            let k = (slot.width() / tw as f32).min(slot.height() / th as f32);
+            let wh = Vec2::new(tw as f32 * k, th as f32 * k);
+            let pic = Rect::from_min_size(Pos2::new(slot.center().x - wh.x / 2.0, slot.min.y), wh);
+            painter.rect_filled(pic.expand(2.0), 2.0, Color32::WHITE);
+            painter.image(
+                img.frames[0].0.id(),
+                pic,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        _ => {
+            let paper = Color32::from_gray(if dark { 70 } else { 240 });
+            painter.rect_filled(slot, 2.0, paper);
+        }
+    }
+
+    // Front panel, narrower at the top, hiding the photo's lower part so it
+    // sits inside the folder.
+    let top = folder.min.y + folder.height() * 0.58;
+    let inset = s * 0.03;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            Pos2::new(folder.min.x + inset, top),
+            Pos2::new(folder.max.x - inset, top),
+            Pos2::new(folder.max.x, folder.max.y - r),
+            Pos2::new(folder.max.x - r, folder.max.y),
+            Pos2::new(folder.min.x + r, folder.max.y),
+            Pos2::new(folder.min.x, folder.max.y - r),
+        ],
+        front,
+        egui::Stroke::NONE,
+    ));
+    painter.line_segment(
+        [
+            Pos2::new(folder.min.x + inset, top),
+            Pos2::new(folder.max.x - inset, top),
+        ],
+        egui::Stroke::new(1.5, edge),
+    );
+
+    let lines = if hidden > 0 { 2.0 } else { 1.0 };
+    let first = top + (folder.max.y - top) / 2.0 - (lines - 1.0) * 7.5;
     painter.text(
-        Pos2::new(band.center().x, band.min.y + 13.0),
+        Pos2::new(folder.center().x, first),
         egui::Align2::CENTER_CENTER,
         "Open folder  ›",
-        egui::FontId::proportional(14.0),
-        Color32::WHITE,
+        egui::FontId::proportional(13.0),
+        ink,
     );
     if hidden > 0 {
         painter.text(
-            Pos2::new(band.center().x, band.min.y + 31.0),
+            Pos2::new(folder.center().x, first + 15.0),
             egui::Align2::CENTER_CENTER,
             format!("+{hidden} more"),
-            egui::FontId::proportional(12.0),
-            Color32::from_gray(210),
+            egui::FontId::proportional(11.0),
+            ink.gamma_multiply(0.8),
         );
     }
 }
 
-/// Draw a thumbnail centred in the top square of a grid cell; returns where
-/// the picture (or its placeholder) went.
-fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, slot: Option<&Slot>) -> Rect {
+/// Draw a thumbnail centred in the top square of a grid cell.
+fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, slot: Option<&Slot>) {
     let box_rect = Rect::from_min_size(
         cell.min + Vec2::new((cell.width() - size) / 2.0, 4.0),
         Vec2::splat(size),
@@ -2046,7 +2115,6 @@ fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, slot: Option<&Slo
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
-            r
         }
         Some(Slot::Failed(_)) => {
             painter.text(
@@ -2056,7 +2124,6 @@ fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, slot: Option<&Slo
                 egui::FontId::proportional(28.0),
                 Color32::LIGHT_RED,
             );
-            box_rect.shrink(size * 0.1)
         }
         _ => {
             let placeholder = if painter.ctx().theme() == egui::Theme::Dark {
@@ -2064,9 +2131,7 @@ fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, slot: Option<&Slo
             } else {
                 Color32::from_gray(215)
             };
-            let r = box_rect.shrink(size * 0.1);
-            painter.rect_filled(r, 4.0, placeholder);
-            r
+            painter.rect_filled(box_rect.shrink(size * 0.1), 4.0, placeholder);
         }
     }
 }
