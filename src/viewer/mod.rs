@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, Key, Modifiers, PointerButton, Pos2, Rect, Sense, Vec2};
 
-use chtra::folder::{self, Entry, SortKey};
-use chtra::format::Format;
+use chitra::folder::{self, Entry, SortKey};
+use chitra::format::Format;
 
 use convert_dialog::ConvertDialog;
 use desktop_theme::DesktopTheme;
@@ -41,9 +41,9 @@ const WHEEL_PAUSE: Duration = Duration::from_millis(120);
 pub fn run(path: Option<PathBuf>) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Chtra")
+            .with_title("Chitra")
             // Matches the Linux .desktop file so docks and taskbars show the right icon.
-            .with_app_id("io.github.nishantnkumar_cell.Chtra")
+            .with_app_id("io.github.nishantnkumar_cell.Chitra")
             .with_inner_size([1280.0, 840.0])
             .with_min_inner_size([360.0, 260.0])
             .with_drag_and_drop(true)
@@ -53,7 +53,7 @@ pub fn run(path: Option<PathBuf>) -> Result<(), String> {
         ..Default::default()
     };
     eframe::run_native(
-        "Chtra",
+        "Chitra",
         options,
         Box::new(move |cc| Ok(Box::new(App::new(cc, path)))),
     )
@@ -598,7 +598,7 @@ impl App {
         let Some(path) = self.current_path() else {
             return;
         };
-        let result = chtra::decode_file(&path, chtra::DecodeOptions::default())
+        let result = chitra::decode_file(&path, chitra::DecodeOptions::default())
             .map_err(|e| e.to_string())
             .and_then(|d| {
                 let rgba = d.image.to_rgba8();
@@ -1870,12 +1870,12 @@ impl App {
     fn update_title(&mut self, ctx: &egui::Context) {
         let title = match self.current() {
             Some(e) => format!(
-                "{} ({}/{}) - Chtra",
+                "{} ({}/{}) - Chitra",
                 e.file_name(),
                 self.index + 1,
                 self.entries.len()
             ),
-            None => "Chtra".to_string(),
+            None => "Chitra".to_string(),
         };
         if title != self.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

@@ -30,7 +30,7 @@ pub struct Frame {
     pub delay: Duration,
 }
 
-/// A decoded image plus the metadata Chtra cares about.
+/// A decoded image plus the metadata Chitra cares about.
 pub struct Decoded {
     pub format: Format,
     /// The still image (first frame for animations), with EXIF orientation applied.
@@ -586,7 +586,7 @@ fn buffer16_to_dynamic(
     })
 }
 
-/// Read only the header to get dimensions cheaply (used by `chtra info`).
+/// Read only the header to get dimensions cheaply (used by `chitra info`).
 pub fn dimensions(path: &Path) -> Result<(u32, u32, Format), DecodeError> {
     let data = std::fs::read(path)?;
     let format = detect_format(&data, Some(path)).ok_or(DecodeError::UnknownFormat)?;

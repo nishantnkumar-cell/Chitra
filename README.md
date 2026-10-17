@@ -1,4 +1,4 @@
-# Chtra
+# Chitra
 
 A fast, small, memory-safe photo viewer and batch converter for Windows and
 Linux (KDE Plasma and GNOME); a macOS (Apple Silicon) version is in progress.
@@ -9,29 +9,29 @@ Use the installer, or run the portable `.exe` without installing anything.
 
 Formats: **JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF**, including animated GIF,
 WebP, APNG and JPEG XL. **HEIC/HEIF** photos (as taken by iPhones) open too,
-and can be converted to any of the other formats; Chtra does not write HEIF.
+and can be converted to any of the other formats; Chitra does not write HEIF.
 
 ## Install
 
 ### Windows
 
-Run `Chtra-Setup-<version>-x64.exe` (Windows 10 or 11, 64-bit). It installs
+Run `Chitra-Setup-<version>-x64.exe` (Windows 10 or 11, 64-bit). It installs
 for your account without needing admin rights; the first page also offers an
 install for all users. You get:
 
-- Chtra in the Start menu, and a desktop icon if you tick it;
-- Chtra under **Open with** for JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF and HEIC, and
-  **Browse with Chtra** on folders (on Windows 11 it is under "Show more
+- Chitra in the Start menu, and a desktop icon if you tick it;
+- Chitra under **Open with** for JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF and HEIC, and
+  **Browse with Chitra** on folders (on Windows 11 it is under "Show more
   options"). Windows only lets you change your default photo app yourself:
   Open with, then Choose another app, then Always;
-- `chtra-cli.exe` next to `chtra.exe` for scripted conversion;
+- `chitra-cli.exe` next to `chitra.exe` for scripted conversion;
 - an uninstaller in Settings, then Apps.
 
 The installer is not code-signed yet, so Windows SmartScreen may say it is
 from an unknown publisher: click **More info**, then **Run anyway**.
 
-CI builds the installer on every push (the `chtra-windows-installer`
-artifact) from `installer/chtra.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php).
+CI builds the installer on every push (the `chitra-windows-installer`
+artifact) from `installer/chitra.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php).
 Pushing a tag such as `v0.1.0` drafts a GitHub release with the installer and
 both exes attached; it stays a draft until someone publishes it.
 
@@ -41,17 +41,17 @@ both exes attached; it stays a draft until someone publishes it.
 or KDE neon; on Ubuntu run `sudo apt install flatpak` first):
 
 ```
-flatpak install --user Chtra-<version>-x86_64.flatpak
+flatpak install --user Chitra-<version>-x86_64.flatpak
 ```
 
 **Tarball** (no Flatpak needed; installs into `~/.local`, no root):
 
 ```
-tar xzf chtra-<version>-linux-x86_64.tar.gz
-chtra-<version>-linux-x86_64/install.sh        # --uninstall removes it
+tar xzf chitra-<version>-linux-x86_64.tar.gz
+chitra-<version>-linux-x86_64/install.sh        # --uninstall removes it
 ```
 
-Either way Chtra appears in the app menu and under **Open With** in Dolphin and
+Either way Chitra appears in the app menu and under **Open With** in Dolphin and
 Files for every format it reads. On both desktops it:
 
 - runs natively on Wayland (X11 still works);
@@ -66,14 +66,14 @@ The Flatpak has no network access. It can read and write your home folder and
 external drives (`/media`, `/run/media`, `/mnt`) so the folder browser and batch
 converter work anywhere you keep photos. Builds target x86-64-v2 CPUs (Intel
 since 2008, AMD since 2011) and use faster AVX2 code at run time where the CPU
-has it. CI builds both packages on every push (the `chtra-linux-x86_64`
+has it. CI builds both packages on every push (the `chitra-linux-x86_64`
 artifact) and checks that they install and run.
 
 ## Viewer
 
-Open a photo by double-clicking it (set Chtra as the default app or use
+Open a photo by double-clicking it (set Chitra as the default app or use
 "Open with"), by dragging it onto the window, or with `Ctrl+O`.
-Chtra lists the rest of the folder and you move through it with the keyboard.
+Chitra lists the rest of the folder and you move through it with the keyboard.
 
 | Key | Action |
 |---|---|
@@ -106,10 +106,10 @@ returns to fit and whether wheel tilt and Back/Forward change photo, sorting
 (name in natural order, date modified, size, type; ascending or descending),
 the folder overview and thumbnail size, and the theme: **Same as Windows**
 (the default), **Light** or **Dark**. Changes apply at once and are saved in
-`%APPDATA%\Chtra\settings.ini` on Windows and `~/.config/Chtra/settings.ini`
+`%APPDATA%\Chitra\settings.ini` on Windows and `~/.config/Chitra/settings.ini`
 on Linux.
 
-**Folder overview:** open a folder that has sub-folders and Chtra shows one
+**Folder overview:** open a folder that has sub-folders and Chitra shows one
 row per sub-folder with its first photos (as many as fit the window), then an
 **Open folder** tile that browses it. Photos directly in the folder get the
 first row. Click a photo to view it; the arrow keys and wheel then move
@@ -128,16 +128,16 @@ you zoom in. Holding an arrow key cancels decodes you have already skipped.
 ## Batch converter
 
 From the viewer: **Convert** (or `Ctrl+S`) converts the current photo or the
-whole folder. From a terminal or script, use `chtra-cli.exe`, the console
+whole folder. From a terminal or script, use `chitra-cli.exe`, the console
 build of the same commands (cmd and PowerShell wait for it and get its exit
-code; `chtra.exe` is a windowed app, so they return to the prompt at once):
+code; `chitra.exe` is a windowed app, so they return to the prompt at once):
 
 ```
-chtra-cli convert photos\ --to webp --out web\ --resize 2048
-chtra-cli convert *.png --to jpg -q 85 --rename "holiday_{n:03}"
-chtra-cli convert scans\ -r --to jxl --out archive\
-chtra-cli convert iphone\*.heic --to jpg
-chtra-cli info photo.jpg
+chitra-cli convert photos\ --to webp --out web\ --resize 2048
+chitra-cli convert *.png --to jpg -q 85 --rename "holiday_{n:03}"
+chitra-cli convert scans\ -r --to jxl --out archive\
+chitra-cli convert iphone\*.heic --to jpg
+chitra-cli info photo.jpg
 ```
 
 Exit codes: 0 all converted, 1 some files failed (or none were found), 2 bad arguments.
@@ -168,7 +168,7 @@ pixels and reset in the copied EXIF, so outputs always display upright.
 
 ## Builds and licences
 
-Chtra is free software under the [GNU Affero General Public License v3.0 or
+Chitra is free software under the [GNU Affero General Public License v3.0 or
 later](LICENSE). You may use, share and modify it, including commercially;
 if you distribute a modified version, or let people use one over a network,
 you must publish its source under the same licence.
@@ -195,14 +195,14 @@ files is memory safe:
 | Lossy WebP / JPEG XL encode | `zenwebp`, `jxl-encoder` |
 | UI | `eframe`/`egui` (OpenGL) |
 
-Chtra's own library code is `#![forbid(unsafe_code)]`. The only `unsafe` in
-the app is one call to the Windows `AttachConsole` API so `chtra convert` can
+Chitra's own library code is `#![forbid(unsafe_code)]`. The only `unsafe` in
+the app is one call to the Windows `AttachConsole` API so `chitra convert` can
 print to the terminal it was started from. Decoders run with memory limits,
 and tests feed truncated and corrupted files to every decoder.
 
 ## Security
 
-- **Offline only.** Chtra makes no network connections: no telemetry, no
+- **Offline only.** Chitra makes no network connections: no telemetry, no
   update checks, and it never launches other programs. CI fails if a
   networking or TLS crate is ever added.
 - **Untrusted files.** Decoders are capped at 2 GiB, so a small file claiming
@@ -218,7 +218,7 @@ and tests feed truncated and corrupted files to every decoder.
 ## Building
 
 ```
-cargo build --release                         # target\release\chtra.exe and chtra-cli.exe
+cargo build --release                         # target\release\chitra.exe and chitra-cli.exe
 cargo build --release --no-default-features   # without the lossy WebP/JXL encoders
 cargo test
 ```
@@ -235,7 +235,7 @@ $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches
 $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
           "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 cargo build --release
-& $iscc /Qp "/DAppVersion=$version" installer\chtra.iss   # dist\Chtra-Setup-<version>-x64.exe
+& $iscc /Qp "/DAppVersion=$version" installer\chitra.iss   # dist\Chitra-Setup-<version>-x64.exe
 ```
 
 Linux packages (tarball and Flatpak), including building them on Windows

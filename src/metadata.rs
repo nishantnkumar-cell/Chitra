@@ -25,7 +25,7 @@ pub fn exif_for_output(exif: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Human-readable EXIF fields, in a stable order, for the info panel and `chtra info`.
+/// Human-readable EXIF fields, in a stable order, for the info panel and `chitra info`.
 pub fn readable_fields(exif: &[u8]) -> Vec<(String, String)> {
     use exif::{In, Tag};
 

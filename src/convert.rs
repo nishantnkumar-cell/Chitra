@@ -432,7 +432,7 @@ fn temp_path(output: &Path) -> PathBuf {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    output.with_file_name(format!(".{name}.{}.chtra-tmp", std::process::id()))
+    output.with_file_name(format!(".{name}.{}.chitra-tmp", std::process::id()))
 }
 
 #[cfg(test)]

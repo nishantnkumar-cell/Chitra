@@ -1,9 +1,9 @@
 //! Viewer preferences, kept in a small `key = value` text file in the user's
-//! config folder (`%APPDATA%\Chtra\settings.ini` on Windows).
+//! config folder (`%APPDATA%\Chitra\settings.ini` on Windows).
 
 use std::path::PathBuf;
 
-use chtra::folder::SortKey;
+use chitra::folder::SortKey;
 use eframe::egui;
 
 pub const SLIDESHOW_SECS: std::ops::RangeInclusive<u32> = 1..=60;
@@ -129,7 +129,7 @@ impl Settings {
         } else {
             PathBuf::from(std::env::var_os("HOME")?).join(".config")
         };
-        Some(base.join("Chtra").join("settings.ini"))
+        Some(base.join("Chitra").join("settings.ini"))
     }
 
     /// Saved settings, or the defaults when there are none.
@@ -204,7 +204,7 @@ impl Settings {
 
     pub fn to_text(&self) -> String {
         format!(
-            "# Chtra settings\n\
+            "# Chitra settings\n\
              slideshow_seconds = {}\n\
              mouse_wheel = {}\n\
              right_click_fit = {}\n\

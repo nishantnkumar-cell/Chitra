@@ -1,4 +1,4 @@
-//! Chtra: a fast, small, memory-safe photo viewer and batch converter.
+//! Chitra: a fast, small, memory-safe photo viewer and batch converter.
 //!
 //! The library holds everything that is not UI: format detection, decoding,
 //! encoding, resizing, EXIF handling, folder listing and batch conversion.

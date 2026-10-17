@@ -1,5 +1,5 @@
 //! The "Convert" window: the batch converter with the same engine as
-//! `chtra convert`, running on a background thread.
+//! `chitra convert`, running on a background thread.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 
-use chtra::convert::{self, ConflictPolicy, ConvertOptions, Outcome, Report};
-use chtra::encode;
-use chtra::format::Format;
-use chtra::resize::ResizeSpec;
+use chitra::convert::{self, ConflictPolicy, ConvertOptions, Outcome, Report};
+use chitra::encode;
+use chitra::format::Format;
+use chitra::resize::ResizeSpec;
 
 use super::util::human_bytes;
 

@@ -1,5 +1,5 @@
 [package]
-name = "chtra"
+name = "chitra"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
@@ -7,12 +7,12 @@ description = "Fast, small, memory-safe photo viewer and batch converter (JPEG, 
 license = "AGPL-3.0-or-later"
 
 [[bin]]
-name = "chtra"
+name = "chitra"
 path = "src/main.rs"
 
 [[bin]]
-name = "chtra-cli"
-path = "src/bin/chtra-cli.rs"
+name = "chitra-cli"
+path = "src/bin/chitra-cli.rs"
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "avif", "rayon"] }

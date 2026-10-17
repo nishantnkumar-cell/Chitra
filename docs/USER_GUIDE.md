@@ -1,6 +1,6 @@
-# Chtra user guide
+# Chitra user guide
 
-Chtra is a photo viewer and batch converter. It opens JPEG, JPEG XL, PNG, GIF,
+Chitra is a photo viewer and batch converter. It opens JPEG, JPEG XL, PNG, GIF,
 BMP, WebP, AVIF and HEIC/HEIF (iPhone) photos, and converts between them. It
 works offline and never connects to the internet.
 
@@ -21,47 +21,47 @@ works offline and never connects to the internet.
 
 ### Windows 10 and 11
 
-1. Download `Chtra-Setup-<version>-x64.exe` and run it.
+1. Download `Chitra-Setup-<version>-x64.exe` and run it.
 2. If Windows shows **Windows protected your PC**, click **More info**, then
    **Run anyway**. (The installer is not code-signed yet.)
 3. Choose **Install for me only** (no admin rights needed) or **all users**.
 4. Optionally tick **Create a desktop shortcut**.
 
-Chtra then appears in the Start menu and under **Open with** for every
+Chitra then appears in the Start menu and under **Open with** for every
 supported format. To make it your default photo viewer, right-click a photo,
-choose **Open with > Choose another app**, pick **Chtra** and tick **Always**.
+choose **Open with > Choose another app**, pick **Chitra** and tick **Always**.
 
-To remove it: **Settings > Apps > Installed apps > Chtra > Uninstall**.
+To remove it: **Settings > Apps > Installed apps > Chitra > Uninstall**.
 
 ### Linux (KDE Plasma and GNOME)
 
 Flatpak (recommended):
 
 ```
-flatpak install --user Chtra-<version>-x86_64.flatpak
+flatpak install --user Chitra-<version>-x86_64.flatpak
 ```
 
 Or the tarball, which installs into your home folder without root:
 
 ```
-tar xzf chtra-<version>-linux-x86_64.tar.gz
-chtra-<version>-linux-x86_64/install.sh          # add --uninstall to remove
+tar xzf chitra-<version>-linux-x86_64.tar.gz
+chitra-<version>-linux-x86_64/install.sh          # add --uninstall to remove
 ```
 
-Chtra then appears in the app menu and under **Open With** in Dolphin and
+Chitra then appears in the app menu and under **Open With** in Dolphin and
 Files.
 
 ## Opening photos
 
-- Double-click a photo (if Chtra is the default), or right-click it and use
-  **Open with > Chtra**.
-- Drag a photo or folder onto the Chtra window.
+- Double-click a photo (if Chitra is the default), or right-click it and use
+  **Open with > Chitra**.
+- Drag a photo or folder onto the Chitra window.
 - **Open** in the toolbar or `Ctrl+O` opens a photo; `Ctrl+Shift+O` opens a
   folder.
-- On Windows, right-click a folder and choose **Browse with Chtra** (on
+- On Windows, right-click a folder and choose **Browse with Chitra** (on
   Windows 11 it is under **Show more options**).
 
-When you open one photo, Chtra lists every supported photo in the same folder
+When you open one photo, Chitra lists every supported photo in the same folder
 so you can move through them.
 
 ## Moving between photos
@@ -101,7 +101,7 @@ Photos taken sideways are turned upright automatically from their EXIF data.
 - Press `G` or `Enter`, or click **Browse**, to switch between the single
   photo and a **thumbnail grid** of the folder. Click a thumbnail to open it.
   `Ctrl` + wheel or the slider in the toolbar changes the thumbnail size.
-- When a folder has sub-folders, Chtra shows the **folder overview**: the
+- When a folder has sub-folders, Chitra shows the **folder overview**: the
   photos directly in the folder in the first row, then one row per sub-folder
   with its name, how many photos it has, its first photos, and an
   **Open folder** tile at the end.
@@ -171,17 +171,17 @@ Which format to pick:
 
 ### From the command line
 
-Use `chtra-cli` (Windows: `chtra-cli.exe` in the install folder). Examples:
+Use `chitra-cli` (Windows: `chitra-cli.exe` in the install folder). Examples:
 
 ```
-chtra-cli convert photos\ --to webp --out web\ --resize 2048
-chtra-cli convert *.png --to jpg -q 85 --rename "holiday_{n:03}"
-chtra-cli convert scans\ -r --to jxl --out archive\
-chtra-cli convert iphone\*.heic --to jpg
-chtra-cli info photo.jpg
+chitra-cli convert photos\ --to webp --out web\ --resize 2048
+chitra-cli convert *.png --to jpg -q 85 --rename "holiday_{n:03}"
+chitra-cli convert scans\ -r --to jxl --out archive\
+chitra-cli convert iphone\*.heic --to jpg
+chitra-cli info photo.jpg
 ```
 
-Run `chtra-cli convert --help` for every option. Exit codes: `0` all
+Run `chitra-cli convert --help` for every option. Exit codes: `0` all
 converted, `1` some files failed or none were found, `2` invalid options.
 
 ## Settings
@@ -197,7 +197,7 @@ Click **Settings** or press `Ctrl+,`. Changes apply immediately.
 | Theme | Same as Windows/system (default), Light or Dark |
 
 **Restore defaults** resets everything. Settings are stored in
-`%APPDATA%\Chtra\settings.ini` (Windows) or `~/.config/Chtra/settings.ini`
+`%APPDATA%\Chitra\settings.ini` (Windows) or `~/.config/Chitra/settings.ini`
 (Linux).
 
 ## Keyboard and mouse reference
@@ -233,14 +233,14 @@ Press `F1` or **?** in the app for this list.
 code-signed. Click **More info**, then **Run anyway**.
 
 **A photo shows "cannot decode".** The file is damaged or not really in the
-format its extension says. Chtra skips it and carries on with the rest of the
+format its extension says. Chitra skips it and carries on with the rest of the
 folder or batch.
 
 **Converting to AVIF is slow.** AVIF compresses very well but takes several
 seconds per large photo. Use WebP or JPEG XL when speed matters.
 
-**Typing `chtra convert` in PowerShell returns immediately.** Use
-`chtra-cli` instead; `chtra.exe` is the windowed app, so the terminal does
+**Typing `chitra convert` in PowerShell returns immediately.** Use
+`chitra-cli` instead; `chitra.exe` is the windowed app, so the terminal does
 not wait for it.
 
 **The wheel zooms instead of changing photo.** You are zoomed in.

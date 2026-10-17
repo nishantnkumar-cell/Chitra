@@ -1,26 +1,26 @@
-//! Command-line interface: `chtra convert` and `chtra info`.
+//! Command-line interface: `chitra convert` and `chitra info`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use chtra::convert::{self, ConflictPolicy, ConvertOptions, Outcome};
-use chtra::decode::{self, DecodeOptions};
-use chtra::format::Format;
-use chtra::metadata;
-use chtra::resize::ResizeSpec;
+use chitra::convert::{self, ConflictPolicy, ConvertOptions, Outcome};
+use chitra::decode::{self, DecodeOptions};
+use chitra::format::Format;
+use chitra::metadata;
+use chitra::resize::ResizeSpec;
 
 pub const USAGE: &str = "\
-Chtra - fast photo viewer and batch converter
+Chitra - fast photo viewer and batch converter
 
 USAGE:
-    chtra [FILE|FOLDER]              Open the viewer
-    chtra convert [OPTIONS] INPUT... Convert files or folders
-    chtra info FILE...               Show format, size and EXIF
-    chtra --help | --version
+    chitra [FILE|FOLDER]              Open the viewer
+    chitra convert [OPTIONS] INPUT... Convert files or folders
+    chitra info FILE...               Show format, size and EXIF
+    chitra --help | --version
 
-    chtra-cli convert|info ...       Same, as a console program for scripts
+    chitra-cli convert|info ...       Same, as a console program for scripts
                                      (cmd and PowerShell wait for it)
 
 FORMATS: jpg, jxl (JPEG XL), png, gif, bmp, webp, avif
@@ -50,18 +50,18 @@ NOTES:
     EXIF orientation is applied to the pixels, so outputs always display upright.
 
 EXAMPLES:
-    chtra convert photos/ --to webp --out web/ --resize 2048
-    chtra convert *.png --to jpg -q 85 --rename \"holiday_{n:03}\"
-    chtra convert scans/ -r --to jxl --out archive/
+    chitra convert photos/ --to webp --out web/ --resize 2048
+    chitra convert *.png --to jpg -q 85 --rename \"holiday_{n:03}\"
+    chitra convert scans/ -r --to jxl --out archive/
 ";
 
 pub fn version() -> String {
-    let lossy = if chtra::encode::LOSSY_ENCODERS {
+    let lossy = if chitra::encode::LOSSY_ENCODERS {
         " (lossy WebP/JXL encoders)"
     } else {
         ""
     };
-    format!("chtra {}{lossy}", env!("CARGO_PKG_VERSION"))
+    format!("chitra {}{lossy}", env!("CARGO_PKG_VERSION"))
 }
 
 fn parse_convert(
@@ -141,7 +141,7 @@ pub fn run_convert(args: Vec<OsString>) -> ExitCode {
     let (opts, inputs, dry_run, quiet) = match parse_convert(args) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("error: {e}\n\nRun 'chtra convert --help' for usage.");
+            eprintln!("error: {e}\n\nRun 'chitra convert --help' for usage.");
             return ExitCode::from(2);
         }
     };
@@ -226,7 +226,7 @@ pub fn run_convert(args: Vec<OsString>) -> ExitCode {
 
 pub fn run_info(args: Vec<OsString>) -> ExitCode {
     if args.is_empty() {
-        eprintln!("usage: chtra info FILE...");
+        eprintln!("usage: chitra info FILE...");
         return ExitCode::from(2);
     }
     let mut failed = false;

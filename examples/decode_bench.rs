@@ -3,8 +3,8 @@
 
 use std::time::Instant;
 
-use chtra::decode::{DecodeOptions, decode_file};
-use chtra::resize;
+use chitra::decode::{DecodeOptions, decode_file};
+use chitra::resize;
 
 fn main() {
     for path in std::env::args_os().skip(1) {

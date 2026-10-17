@@ -40,7 +40,7 @@ fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     platform::attach_console();
-                    platform::show_error(&format!("Chtra could not start: {e}"));
+                    platform::show_error(&format!("Chitra could not start: {e}"));
                     ExitCode::from(1)
                 }
             }

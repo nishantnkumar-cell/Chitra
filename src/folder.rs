@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn subfolders_in_natural_order() {
-        let dir = std::env::temp_dir().join(format!("chtra-subfolders-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("chitra-subfolders-{}", std::process::id()));
         for name in ["day10", "Day2", ".hidden", "$RECYCLE.BIN", "day1"] {
             fs::create_dir_all(dir.join(name)).unwrap();
         }
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn images_below_walks_sub_folders_in_order() {
-        let dir = std::env::temp_dir().join(format!("chtra-below-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("chitra-below-{}", std::process::id()));
         for f in [
             "2025 Leh/b.jpg",
             "2024 Goa/beach/x.png",

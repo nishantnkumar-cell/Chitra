@@ -4,7 +4,7 @@
 
 Please report security problems privately, not in a public issue. On GitHub,
 open the repository's **Security** tab and choose **Report a vulnerability**.
-Include the Chtra version (`chtra-cli --version`), your operating system, and
+Include the Chitra version (`chitra-cli --version`), your operating system, and
 if possible the file that triggers the problem.
 
 You should get a reply within a week. Fixes are released as a new version and
@@ -16,12 +16,12 @@ Only the latest release gets security fixes.
 
 ## Security design
 
-Chtra opens files that may come from anywhere, so it is built to treat every
+Chitra opens files that may come from anywhere, so it is built to treat every
 photo as untrusted input.
 
 **Memory-safe decoding.** Every decoder and encoder is written in Rust. The
 HEIC (HEVC) and AVIF (AV1) decoders are pure Rust with no `unsafe` code, and
-no system or C image codecs run inside Chtra. Chtra's own library code is
+no system or C image codecs run inside Chitra. Chitra's own library code is
 `#![forbid(unsafe_code)]`; the only `unsafe` in the app is one Windows API
 call that attaches to the terminal for command-line output.
 
@@ -37,7 +37,7 @@ batch conversion carries on with the other files.
 place, so a failure never leaves a half-written output or damages an input
 that is being overwritten.
 
-**No network access.** Chtra makes no network connections: no telemetry, no
+**No network access.** Chitra makes no network connections: no telemetry, no
 update checks, no online lookups, and it never starts other programs. CI
 fails if a networking or TLS library is ever added. The Linux Flatpak runs
 without network permission.

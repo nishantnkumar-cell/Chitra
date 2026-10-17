@@ -80,22 +80,22 @@ jobs:
       - name: Build exe
         run: |
           cargo build --release
-          Copy-Item target/release/chtra.exe chtra.exe
-          Copy-Item target/release/chtra-cli.exe chtra-cli.exe
+          Copy-Item target/release/chitra.exe chitra.exe
+          Copy-Item target/release/chitra-cli.exe chitra-cli.exe
       - name: Check size and smoke-test the CLI
         shell: pwsh
         run: |
-          $size = (Get-Item chtra.exe).Length
-          $cli = (Get-Item chtra-cli.exe).Length
+          $size = (Get-Item chitra.exe).Length
+          $cli = (Get-Item chitra-cli.exe).Length
           # As annotations, so the sizes show on the pull request page.
-          Write-Host "::notice title=Exe size::chtra.exe $([math]::Round($size / 1MB, 2)) MiB, chtra-cli.exe $([math]::Round($cli / 1MB, 2)) MiB"
-          if ($size -gt [int]$env:MAX_EXE_BYTES) { throw "chtra.exe exceeds the size budget" }
-          ./chtra-cli.exe --version
-          if ($LASTEXITCODE -ne 0) { throw "chtra-cli --version failed" }
+          Write-Host "::notice title=Exe size::chitra.exe $([math]::Round($size / 1MB, 2)) MiB, chitra-cli.exe $([math]::Round($cli / 1MB, 2)) MiB"
+          if ($size -gt [int]$env:MAX_EXE_BYTES) { throw "chitra.exe exceeds the size budget" }
+          ./chitra-cli.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "chitra-cli --version failed" }
       - name: Check exploit mitigations (ASLR, DEP, Control Flow Guard)
         shell: pwsh
         run: |
-          foreach ($exe in 'chtra.exe', 'chtra-cli.exe') {
+          foreach ($exe in 'chitra.exe', 'chitra-cli.exe') {
             $b = [IO.File]::ReadAllBytes((Resolve-Path $exe))
             $pe = [BitConverter]::ToInt32($b, 0x3C)
             # DllCharacteristics sits 70 bytes into the PE32+ optional header.
@@ -108,10 +108,10 @@ jobs:
           }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: chtra-windows-x64
+          name: chitra-windows-x64
           path: |
-            chtra.exe
-            chtra-cli.exe
+            chitra.exe
+            chitra-cli.exe
             README.md
             LICENSE
       - name: Build the installer
@@ -123,38 +123,38 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "could not install Inno Setup" }
           }
-          & $iscc /Qp "/DAppVersion=$version" installer\chtra.iss
+          & $iscc /Qp "/DAppVersion=$version" installer\chitra.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           Get-ChildItem dist | ForEach-Object { Write-Host "$($_.Name) is $([math]::Round($_.Length / 1MB, 2)) MB" }
       - name: Install, check and uninstall
         shell: pwsh
         run: |
-          $setup = (Get-ChildItem dist\Chtra-Setup-*.exe).FullName
+          $setup = (Get-ChildItem dist\Chitra-Setup-*.exe).FullName
           $p = Start-Process $setup -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER'
           if ($p.ExitCode -ne 0) { throw "setup exited with $($p.ExitCode)" }
-          $app = "$env:LOCALAPPDATA\Programs\Chtra"
-          & "$app\chtra-cli.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw "installed chtra-cli does not run" }
-          foreach ($f in 'chtra.exe', 'LICENSE-AGPL-3.0.txt', 'NOTICE.txt') {
+          $app = "$env:LOCALAPPDATA\Programs\Chitra"
+          & "$app\chitra-cli.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "installed chitra-cli does not run" }
+          foreach ($f in 'chitra.exe', 'LICENSE-AGPL-3.0.txt', 'NOTICE.txt') {
             if (-not (Test-Path "$app\$f")) { throw "$f was not installed" }
           }
           $openWith = Get-ItemProperty 'HKCU:\Software\Classes\.jxl\OpenWithProgids'
-          if ($null -eq $openWith.'Chtra.Image') { throw "Open with entry for .jxl missing" }
+          if ($null -eq $openWith.'Chitra.Image') { throw "Open with entry for .jxl missing" }
           $openWith = Get-ItemProperty 'HKCU:\Software\Classes\.heic\OpenWithProgids'
-          if ($null -eq $openWith.'Chtra.Image') { throw "Open with entry for .heic missing" }
-          if (-not (Test-Path 'HKCU:\Software\Classes\Directory\shell\Chtra\command')) { throw "folder menu entry missing" }
-          $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Chtra.lnk"
+          if ($null -eq $openWith.'Chitra.Image') { throw "Open with entry for .heic missing" }
+          if (-not (Test-Path 'HKCU:\Software\Classes\Directory\shell\Chitra\command')) { throw "folder menu entry missing" }
+          $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Chitra.lnk"
           if (-not (Test-Path $menu)) { throw "Start menu shortcut missing" }
           Start-Process "$app\unins000.exe" -Wait -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
           # The uninstaller finishes from a temporary copy, so wait for it.
-          for ($i = 0; $i -lt 60 -and (Test-Path "$app\chtra.exe"); $i++) { Start-Sleep 1 }
-          if (Test-Path "$app\chtra.exe") { throw "uninstall left chtra.exe behind" }
-          if (Test-Path 'HKCU:\Software\Classes\Chtra.Image') { throw "uninstall left the ProgId behind" }
+          for ($i = 0; $i -lt 60 -and (Test-Path "$app\chitra.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$app\chitra.exe") { throw "uninstall left chitra.exe behind" }
+          if (Test-Path 'HKCU:\Software\Classes\Chitra.Image') { throw "uninstall left the ProgId behind" }
           Write-Host "Installer installs, registers and uninstalls cleanly"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: chtra-windows-installer
-          path: dist/Chtra-Setup-*.exe
+          name: chitra-windows-installer
+          path: dist/Chitra-Setup-*.exe
 
   # Linux tarball and Flatpak for current KDE Plasma and GNOME.
   linux-release:
@@ -180,37 +180,37 @@ jobs:
       - name: Build and pack the tarball
         run: |
           cargo build --release
-          ls -l target/release/chtra target/release/chtra-cli
+          ls -l target/release/chitra target/release/chitra-cli
           sh tools/package_linux.sh
       - name: Install, run and uninstall the tarball
         run: |
           mkdir t
-          tar -C t -xzf dist/chtra-*-linux-x86_64.tar.gz
-          PREFIX="$PWD/t/prefix" t/chtra-*/install.sh
-          t/prefix/bin/chtra-cli --version
-          t/prefix/bin/chtra-cli convert tests/data/pattern.heic --to avif --out t/out
+          tar -C t -xzf dist/chitra-*-linux-x86_64.tar.gz
+          PREFIX="$PWD/t/prefix" t/chitra-*/install.sh
+          t/prefix/bin/chitra-cli --version
+          t/prefix/bin/chitra-cli convert tests/data/pattern.heic --to avif --out t/out
           test -s t/out/pattern.avif
-          PREFIX="$PWD/t/prefix" t/chtra-*/install.sh --uninstall
-          test ! -e t/prefix/bin/chtra
+          PREFIX="$PWD/t/prefix" t/chitra-*/install.sh --uninstall
+          test ! -e t/prefix/bin/chitra
       - name: Build the Flatpak
         run: |
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
             --force-clean --repo=flatpak-repo flatpak-build \
-            packaging/flatpak/io.github.nishantnkumar_cell.Chtra.yml
+            packaging/flatpak/io.github.nishantnkumar_cell.Chitra.yml
           flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-            flatpak-repo "dist/Chtra-$VERSION-x86_64.flatpak" io.github.nishantnkumar_cell.Chtra
+            flatpak-repo "dist/Chitra-$VERSION-x86_64.flatpak" io.github.nishantnkumar_cell.Chitra
       - name: Install and run the Flatpak
         run: |
           flatpak install --user -y --noninteractive dist/*.flatpak
-          dbus-run-session -- flatpak run --command=chtra-cli io.github.nishantnkumar_cell.Chtra --version
-          dbus-run-session -- flatpak run --command=chtra-cli io.github.nishantnkumar_cell.Chtra \
+          dbus-run-session -- flatpak run --command=chitra-cli io.github.nishantnkumar_cell.Chitra --version
+          dbus-run-session -- flatpak run --command=chitra-cli io.github.nishantnkumar_cell.Chitra \
             convert "$PWD/tests/data/pattern.heic" --to png --out "$PWD/t/flatpak"
           test -s t/flatpak/pattern.png
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: chtra-linux-x86_64
+          name: chitra-linux-x86_64
           path: |
             dist/*.tar.gz
             dist/*.flatpak
@@ -232,7 +232,7 @@ jobs:
         with:
           draft: true
           files: |
-            artifacts/chtra-windows-installer/*.exe
-            artifacts/chtra-windows-x64/chtra.exe
-            artifacts/chtra-windows-x64/chtra-cli.exe
-            artifacts/chtra-linux-x86_64/*
+            artifacts/chitra-windows-installer/*.exe
+            artifacts/chitra-windows-x64/chitra.exe
+            artifacts/chitra-windows-x64/chitra-cli.exe
+            artifacts/chitra-linux-x86_64/*

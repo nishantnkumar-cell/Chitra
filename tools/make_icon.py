@@ -1,12 +1,12 @@
-"""Draws the Chtra "lotus aperture" icon and writes assets/chtra.png,
-assets/chtra.ico and the Linux hicolor icons in packaging/linux/icons. Run
+"""Draws the Chitra "lotus aperture" icon and writes assets/chitra.png,
+assets/chitra.ico and the Linux hicolor icons in packaging/linux/icons. Run
 from the repository root: python3 tools/make_icon.py (needs Pillow)."""
 
 import math
 import os
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-APP_ID = "io.github.nishantnkumar_cell.Chtra"
+APP_ID = "io.github.nishantnkumar_cell.Chitra"
 N = 1024  # drawing size; every output is downsampled from this
 C = N / 2
 
@@ -120,10 +120,10 @@ def draw():
 
 def main():
     big = draw()
-    big.resize((256, 256), Image.LANCZOS).save("assets/chtra.png", optimize=True)
+    big.resize((256, 256), Image.LANCZOS).save("assets/chitra.png", optimize=True)
     sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
     frames = [big.resize((s, s), Image.LANCZOS) for s in sizes]
-    frames[-1].save("assets/chtra.ico", sizes=[(s, s) for s in sizes],
+    frames[-1].save("assets/chitra.ico", sizes=[(s, s) for s in sizes],
                     append_images=frames[:-1])
     for s in [16, 24, 32, 48, 64, 128, 256, 512]:
         folder = f"packaging/linux/icons/hicolor/{s}x{s}/apps"

@@ -5,9 +5,9 @@ mod common;
 
 use std::time::Duration;
 
-use chtra::decode::{DecodeOptions, Frame, decode_bytes};
-use chtra::encode::{EncodeOptions, encode, is_lossy};
-use chtra::format::Format;
+use chitra::decode::{DecodeOptions, Frame, decode_bytes};
+use chitra::encode::{EncodeOptions, encode, is_lossy};
+use chitra::format::Format;
 use common::*;
 use image::DynamicImage;
 
@@ -241,7 +241,7 @@ fn broken_heif_fails_without_panicking() {
 fn detects_format_from_content_not_name() {
     let bytes = encode_to_vec(&pattern_rgb(8, 8), &EncodeOptions::new(Format::Png));
     assert_eq!(
-        chtra::decode::detect_format(&bytes, Some(std::path::Path::new("x.jpg"))),
+        chitra::decode::detect_format(&bytes, Some(std::path::Path::new("x.jpg"))),
         Some(Format::Png)
     );
 }

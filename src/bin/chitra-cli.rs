@@ -1,6 +1,6 @@
-//! Console build of the converter. `chtra.exe` is a GUI-subsystem app on
+//! Console build of the converter. `chitra.exe` is a GUI-subsystem app on
 //! Windows, so cmd and PowerShell don't wait for it; scripts should call this
-//! binary instead. Same commands as `chtra`, without the viewer.
+//! binary instead. Same commands as `chitra`, without the viewer.
 
 #[path = "../cli.rs"]
 mod cli;
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprint!(
-                "chtra-cli runs `convert` and `info`; open photos with chtra.exe.\n\n{}",
+                "chitra-cli runs `convert` and `info`; open photos with chitra.exe.\n\n{}",
                 cli::USAGE
             );
             ExitCode::from(2)

@@ -20,7 +20,7 @@ unmaintained = "workspace"
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
-# No C TLS or networking stacks: Chtra never goes online.
+# No C TLS or networking stacks: Chitra never goes online.
 deny = [
     { name = "openssl" },
     { name = "openssl-sys" },

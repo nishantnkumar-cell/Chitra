@@ -1,4 +1,4 @@
-# Building and packaging Chtra
+# Building and packaging Chitra
 
 This covers building from source, running the tests, and making the release
 packages: the Windows installer, the Linux tarball and the Flatpak. Everything
@@ -30,7 +30,7 @@ Windows, if a new terminal cannot find `cargo`, run
 
 ```
 git clone https://github.com/nishantnkumar-cell/Chitra
-cd Chtra
+cd Chitra
 cargo test --release
 cargo build --release
 ```
@@ -39,8 +39,8 @@ Outputs in `target/release/`:
 
 | File | What |
 |---|---|
-| `chtra.exe` / `chtra` | The viewer (also runs `convert` and `info`) |
-| `chtra-cli.exe` / `chtra-cli` | Console build for scripts; the terminal waits for it and gets its exit code |
+| `chitra.exe` / `chitra` | The viewer (also runs `convert` and `info`) |
+| `chitra-cli.exe` / `chitra-cli` | Console build for scripts; the terminal waits for it and gets its exit code |
 
 The first build takes 5 to 15 minutes; later builds only recompile what
 changed.
@@ -52,7 +52,7 @@ Feature flags:
 | `cargo build --release` | Lossy and lossless |
 | `cargo build --release --no-default-features` | Lossless only (leaves out the `zenwebp` and `jxl-encoder` crates) |
 
-Chtra is licensed AGPL-3.0-or-later either way.
+Chitra is licensed AGPL-3.0-or-later either way.
 
 ## Windows installer
 
@@ -63,10 +63,10 @@ $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches
 $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
           "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 cargo build --release
-& $iscc /Qp "/DAppVersion=$version" installer\chtra.iss
+& $iscc /Qp "/DAppVersion=$version" installer\chitra.iss
 ```
 
-Result: `dist\Chtra-Setup-<version>-x64.exe`.
+Result: `dist\Chitra-Setup-<version>-x64.exe`.
 
 `Select-String` needs `-Path` and `-Pattern` named, otherwise it treats the
 pattern as a file name. A per-user `winget` install puts Inno Setup under
@@ -76,9 +76,9 @@ the snippet checks both.
 Test the installer without clicking through it:
 
 ```
-.\dist\Chtra-Setup-$version-x64.exe /VERYSILENT /CURRENTUSER /NORESTART
-& "$env:LOCALAPPDATA\Programs\Chtra\chtra-cli.exe" --version
-& "$env:LOCALAPPDATA\Programs\Chtra\unins000.exe" /VERYSILENT /NORESTART
+.\dist\Chitra-Setup-$version-x64.exe /VERYSILENT /CURRENTUSER /NORESTART
+& "$env:LOCALAPPDATA\Programs\Chitra\chitra-cli.exe" --version
+& "$env:LOCALAPPDATA\Programs\Chitra\unins000.exe" /VERYSILENT /NORESTART
 ```
 
 ## Linux packages
@@ -91,15 +91,15 @@ cargo build --release
 sh tools/package_linux.sh
 ```
 
-This writes `dist/chtra-<version>-linux-x86_64.tar.gz` and the unpacked files
+This writes `dist/chitra-<version>-linux-x86_64.tar.gz` and the unpacked files
 in `dist/linux/`, which the Flatpak uses. Then the Flatpak:
 
 ```
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse --force-clean \
-    --repo=flatpak-repo flatpak-build packaging/flatpak/io.github.nishantnkumar_cell.Chtra.yml
+    --repo=flatpak-repo flatpak-build packaging/flatpak/io.github.nishantnkumar_cell.Chitra.yml
 flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-    flatpak-repo dist/Chtra-<version>-x86_64.flatpak io.github.nishantnkumar_cell.Chtra
+    flatpak-repo dist/Chitra-<version>-x86_64.flatpak io.github.nishantnkumar_cell.Chitra
 ```
 
 The first Flatpak build downloads the Freedesktop runtime and SDK (about
@@ -153,7 +153,7 @@ much faster and does not mix with the Windows `target` folder.
 
 To pick up later changes, run `cd ~/chitra && git pull` and repeat from
 step 4. WSL can also show the Linux viewer on the Windows desktop
-(`./target/release/chtra`), which is handy for a quick check, but it is not a
+(`./target/release/chitra`), which is handy for a quick check, but it is not a
 real KDE or GNOME session.
 
 ## Publishing a release
@@ -165,18 +165,18 @@ is free on every GitHub plan.
 1. Update `version` in `Cargo.toml`, commit and push.
 2. Build the Windows installer and the Linux packages as above, so `dist\`
    holds:
-   - `Chtra-Setup-<version>-x64.exe`
-   - `chtra-<version>-linux-x86_64.tar.gz`
-   - `Chtra-<version>-x86_64.flatpak`
+   - `Chitra-Setup-<version>-x64.exe`
+   - `chitra-<version>-linux-x86_64.tar.gz`
+   - `Chitra-<version>-x86_64.flatpak`
 3. Tag and publish:
 
    ```
    git tag v<version>
    git push origin v<version>
-   gh release create v<version> --title "Chtra <version>" --generate-notes `
-       dist\Chtra-Setup-<version>-x64.exe `
-       dist\chtra-<version>-linux-x86_64.tar.gz `
-       dist\Chtra-<version>-x86_64.flatpak
+   gh release create v<version> --title "Chitra <version>" --generate-notes `
+       dist\Chitra-Setup-<version>-x64.exe `
+       dist\chitra-<version>-linux-x86_64.tar.gz `
+       dist\Chitra-<version>-x86_64.flatpak
    ```
 
    Add `--draft` to check the release page before it goes public.

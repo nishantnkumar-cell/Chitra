@@ -15,10 +15,10 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
 use image::DynamicImage;
 
-use chtra::decode::{DecodeOptions, decode_file};
-use chtra::format::Format;
-use chtra::metadata;
-use chtra::resize;
+use chitra::decode::{DecodeOptions, decode_file};
+use chitra::format::Format;
+use chitra::metadata;
+use chitra::resize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {

@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=Chtra
+Name=Chitra
 GenericName=Image Viewer
 Comment=View photos and convert them in batches
-Exec=chtra %f
-Icon=io.github.nishantnkumar_cell.Chtra
+Exec=chitra %f
+Icon=io.github.nishantnkumar_cell.Chitra
 Terminal=false
 Categories=Graphics;Viewer;Photography;RasterGraphics;2DGraphics;
 Keywords=photo;picture;image;viewer;converter;JPEG;HEIC;AVIF;WebP;JXL;
 MimeType=image/jpeg;image/jxl;image/png;image/apng;image/vnd.mozilla.apng;image/gif;image/bmp;image/x-bmp;image/x-ms-bmp;image/webp;image/avif;image/heic;image/heif;image/heic-sequence;image/heif-sequence;
 StartupNotify=true
-StartupWMClass=io.github.nishantnkumar_cell.Chtra
+StartupWMClass=io.github.nishantnkumar_cell.Chitra

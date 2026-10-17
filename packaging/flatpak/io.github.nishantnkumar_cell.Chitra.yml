@@ -1,12 +1,12 @@
 # Flatpak of the Linux release build. Build it after tools/package_linux.sh:
 #   flatpak-builder --user --install-deps-from=flathub --repo=repo build \
-#       packaging/flatpak/io.github.nishantnkumar_cell.Chtra.yml
-#   flatpak build-bundle repo Chtra.flatpak io.github.nishantnkumar_cell.Chtra
-id: io.github.nishantnkumar_cell.Chtra
+#       packaging/flatpak/io.github.nishantnkumar_cell.Chitra.yml
+#   flatpak build-bundle repo Chitra.flatpak io.github.nishantnkumar_cell.Chitra
+id: io.github.nishantnkumar_cell.Chitra
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
-command: chtra
+command: chitra
 finish-args:
   # Native Wayland on current KDE Plasma and GNOME, X11 only as a fallback.
   - --socket=wayland
@@ -22,23 +22,23 @@ finish-args:
   # Deleted photos go to the desktop's own Trash.
   - --filesystem=xdg-data/Trash
 modules:
-  - name: chtra
+  - name: chitra
     buildsystem: simple
     sources:
       - type: dir
         path: ../../dist/linux
       - type: script
-        dest-filename: chtra-launcher
+        dest-filename: chitra-launcher
         commands:
           # The trash crate puts files in $XDG_DATA_HOME/Trash; outside the
           # sandbox's private data folder, that is the desktop's Trash.
           - export XDG_DATA_HOME="$HOME/.local/share"
-          - exec /app/libexec/chtra "$@"
+          - exec /app/libexec/chitra "$@"
     build-commands:
-      - install -Dm755 chtra /app/libexec/chtra
-      - install -Dm755 chtra-launcher /app/bin/chtra
-      - install -Dm755 chtra-cli /app/bin/chtra-cli
-      - install -Dm644 -t /app/share/applications share/applications/io.github.nishantnkumar_cell.Chtra.desktop
-      - install -Dm644 -t /app/share/metainfo share/metainfo/io.github.nishantnkumar_cell.Chtra.metainfo.xml
+      - install -Dm755 chitra /app/libexec/chitra
+      - install -Dm755 chitra-launcher /app/bin/chitra
+      - install -Dm755 chitra-cli /app/bin/chitra-cli
+      - install -Dm644 -t /app/share/applications share/applications/io.github.nishantnkumar_cell.Chitra.desktop
+      - install -Dm644 -t /app/share/metainfo share/metainfo/io.github.nishantnkumar_cell.Chitra.metainfo.xml
       - cp -r share/icons /app/share/
-      - install -Dm644 -t /app/share/licenses/io.github.nishantnkumar_cell.Chtra LICENSE-AGPL-3.0.txt NOTICE.txt
+      - install -Dm644 -t /app/share/licenses/io.github.nishantnkumar_cell.Chitra LICENSE-AGPL-3.0.txt NOTICE.txt

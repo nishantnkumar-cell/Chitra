@@ -1,7 +1,7 @@
 //! A GNOME-style header bar.
 //!
 //! GNOME on Wayland does not draw title bars: each app draws its own. There
-//! Chtra turns off the window system's decorations and makes its toolbar the
+//! Chitra turns off the window system's decorations and makes its toolbar the
 //! title bar (drag to move, double-click to maximize, window buttons on the
 //! right) and handles resizing from the window edges itself. KDE Plasma,
 //! X11, Windows and macOS keep the desktop's own title bar.

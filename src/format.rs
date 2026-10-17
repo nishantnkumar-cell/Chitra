@@ -1,4 +1,4 @@
-//! The image formats Chtra reads and writes, and how to recognise them.
+//! The image formats Chitra reads and writes, and how to recognise them.
 
 use std::fmt;
 use std::path::Path;
@@ -20,7 +20,7 @@ pub enum Format {
 }
 
 impl Format {
-    /// Every format Chtra can open.
+    /// Every format Chitra can open.
     pub const ALL: [Format; 8] = [
         Format::Jpeg,
         Format::JpegXl,
@@ -32,7 +32,7 @@ impl Format {
         Format::Heif,
     ];
 
-    /// The formats Chtra can write.
+    /// The formats Chitra can write.
     pub const WRITABLE: [Format; 7] = [
         Format::Jpeg,
         Format::JpegXl,
@@ -85,12 +85,12 @@ impl Format {
         }
     }
 
-    /// Whether Chtra can write this format (HEIF is read only).
+    /// Whether Chitra can write this format (HEIF is read only).
     pub fn can_write(self) -> bool {
         self != Format::Heif
     }
 
-    /// Whether this format can hold an alpha channel when written by Chtra.
+    /// Whether this format can hold an alpha channel when written by Chitra.
     pub fn supports_alpha(self) -> bool {
         !matches!(self, Format::Jpeg | Format::Bmp)
     }
@@ -180,7 +180,7 @@ impl FromStr for Format {
     }
 }
 
-/// True when the path has an extension Chtra can open.
+/// True when the path has an extension Chitra can open.
 pub fn is_supported_path(path: &Path) -> bool {
     Format::from_path(path).is_some()
 }

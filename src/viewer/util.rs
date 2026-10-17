@@ -45,9 +45,9 @@ pub fn format_time(t: SystemTime) -> String {
 }
 
 /// The window and taskbar icon (the "lotus aperture"), from
-/// `assets/chtra.png`, which `tools/make_icon.py` draws.
+/// `assets/chitra.png`, which `tools/make_icon.py` draws.
 pub fn icon() -> egui::IconData {
-    let png = include_bytes!("../../assets/chtra.png");
+    let png = include_bytes!("../../assets/chitra.png");
     match image::load_from_memory_with_format(png, image::ImageFormat::Png) {
         Ok(img) => {
             let img = img.into_rgba8();

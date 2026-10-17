@@ -6,12 +6,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chtra::convert::{ConflictPolicy, ConvertOptions, Outcome, plan, run};
-use chtra::decode::{DecodeOptions, decode_file};
-use chtra::encode::{EncodeOptions, encode};
-use chtra::format::Format;
-use chtra::metadata;
-use chtra::resize::ResizeSpec;
+use chitra::convert::{ConflictPolicy, ConvertOptions, Outcome, plan, run};
+use chitra::decode::{DecodeOptions, decode_file};
+use chitra::encode::{EncodeOptions, encode};
+use chitra::format::Format;
+use chitra::metadata;
+use chitra::resize::ResizeSpec;
 use common::*;
 
 fn write_image(path: &Path, format: Format, w: u32, h: u32) {
@@ -181,7 +181,7 @@ fn overwriting_the_input_in_place_is_safe() {
 
 #[test]
 fn cli_convert_and_info() {
-    let exe = env!("CARGO_BIN_EXE_chtra");
+    let exe = env!("CARGO_BIN_EXE_chitra");
     let dir = tempfile::tempdir().unwrap();
     write_image(&dir.path().join("x.png"), Format::Png, 64, 32);
     write_image(&dir.path().join("y.bmp"), Format::Bmp, 64, 32);
@@ -235,12 +235,12 @@ fn cli_convert_and_info() {
         .unwrap();
     assert_eq!(bad.status.code(), Some(2));
     let version = Command::new(exe).arg("--version").output().unwrap();
-    assert!(String::from_utf8_lossy(&version.stdout).starts_with("chtra "));
+    assert!(String::from_utf8_lossy(&version.stdout).starts_with("chitra "));
 }
 
 #[test]
 fn console_cli_converts() {
-    let exe = env!("CARGO_BIN_EXE_chtra-cli");
+    let exe = env!("CARGO_BIN_EXE_chitra-cli");
     let dir = tempfile::tempdir().unwrap();
     write_image(&dir.path().join("x.png"), Format::Png, 40, 20);
 

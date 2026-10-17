@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.nishantnkumar_cell.Chtra</id>
-  <name>Chtra</name>
+  <id>io.github.nishantnkumar_cell.Chitra</id>
+  <name>Chitra</name>
   <summary>View photos and convert them in batches</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-or-later</project_license>
@@ -10,7 +10,7 @@
   </developer>
   <description>
     <p>
-      Chtra is a fast, small photo viewer and batch converter. It opens JPEG,
+      Chitra is a fast, small photo viewer and batch converter. It opens JPEG,
       JPEG XL, PNG, GIF, BMP, WebP, AVIF and HEIC photos and converts whole
       folders between them, with resizing and renaming.
     </p>
@@ -26,13 +26,13 @@
       AVIF decoders.
     </p>
   </description>
-  <launchable type="desktop-id">io.github.nishantnkumar_cell.Chtra.desktop</launchable>
+  <launchable type="desktop-id">io.github.nishantnkumar_cell.Chitra.desktop</launchable>
   <url type="homepage">https://github.com/nishantnkumar-cell/Chitra</url>
   <url type="bugtracker">https://github.com/nishantnkumar-cell/Chitra/issues</url>
   <url type="vcs-browser">https://github.com/nishantnkumar-cell/Chitra</url>
   <provides>
-    <binary>chtra</binary>
-    <binary>chtra-cli</binary>
+    <binary>chitra</binary>
+    <binary>chitra-cli</binary>
   </provides>
   <categories>
     <category>Graphics</category>
