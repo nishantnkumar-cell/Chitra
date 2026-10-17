@@ -54,11 +54,16 @@ NOTES:
 PASSPORT OPTIONS:
     -c, --country ID         Photo size: uk, eu, us, india, india-visa,
                              canada, australia, china, japan (--list shows all)
+                             or custom with --size and --head
+        --size WxH           Custom photo size in mm, such as 40x50
+        --head MIN-MAX       Custom head height (chin to crown) in mm, such as 30-34
         --crown X,Y          Pixel at the top of the head (required)
         --chin X,Y           Pixel at the bottom of the chin (required)
         --sheet PAPER        Print sheet instead of one photo: 6x4, 15x10,
                              7x5, a4 or letter (300 dpi, with cutting guides)
         --no-straighten      Keep the photo's tilt
+        --max-kb N           Lower the JPEG quality until the file fits in N KB
+                             (india: 250 by default for one photo)
     -o, --out FILE           Output JPEG (default: NAME-passport-ID.jpg)
         --list               List the photo sizes
 
@@ -249,9 +254,18 @@ fn parse_point(s: &str) -> Result<(f32, f32), String> {
     Ok((x, y))
 }
 
+fn parse_pair(s: &str, sep: char, what: &str) -> Result<(f32, f32), String> {
+    let bad = || format!("invalid {what} '{s}'");
+    let (a, b) = s.split_once(sep).ok_or_else(bad)?;
+    let a: f32 = a.trim().parse().map_err(|_| bad())?;
+    let b: f32 = b.trim().parse().map_err(|_| bad())?;
+    Ok((a, b))
+}
+
 struct PassportArgs {
     input: PathBuf,
-    spec: &'static passport::PhotoSpec,
+    spec: passport::PhotoSpec,
+    max_kb: Option<u32>,
     marks: passport::Marks,
     sheet: Option<passport::Paper>,
     straighten: bool,
@@ -263,7 +277,10 @@ fn parse_passport(args: Vec<OsString>) -> Result<Option<PassportArgs>, lexopt::E
 
     let mut parser = lexopt::Parser::from_args(args);
     let mut input = None;
-    let mut spec = None;
+    let mut country: Option<String> = None;
+    let mut size = None;
+    let mut head = None;
+    let mut max_kb = None;
     let mut crown = None;
     let mut chin = None;
     let mut sheet = None;
@@ -271,11 +288,23 @@ fn parse_passport(args: Vec<OsString>) -> Result<Option<PassportArgs>, lexopt::E
     let mut out = None;
     while let Some(arg) = parser.next()? {
         match arg {
-            Short('c') | Long("country") => {
-                let id = parser.value()?.string()?;
-                spec = Some(passport::spec(&id).ok_or_else(|| {
-                    format!("unknown country '{id}'; run 'chitra passport --list'")
-                })?);
+            Short('c') | Long("country") => country = Some(parser.value()?.string()?),
+            Long("size") => {
+                size = Some(parser.value()?.parse_with(|s| parse_pair(s, 'x', "size"))?)
+            }
+            Long("head") => {
+                head = Some(
+                    parser
+                        .value()?
+                        .parse_with(|s| parse_pair(s, '-', "head range"))?,
+                )
+            }
+            Long("max-kb") => {
+                let kb: u32 = parser.value()?.parse()?;
+                if kb == 0 {
+                    return Err("--max-kb must be at least 1".into());
+                }
+                max_kb = Some(kb);
             }
             Long("crown") => crown = Some(parser.value()?.parse_with(parse_point)?),
             Long("chin") => chin = Some(parser.value()?.parse_with(parse_point)?),
@@ -300,6 +329,7 @@ fn parse_passport(args: Vec<OsString>) -> Result<Option<PassportArgs>, lexopt::E
                         s.background
                     );
                 }
+                println!("custom      Custom size                    --size WxH --head MIN-MAX");
                 return Ok(None);
             }
             Short('h') | Long("help") => {
@@ -317,9 +347,21 @@ fn parse_passport(args: Vec<OsString>) -> Result<Option<PassportArgs>, lexopt::E
     if !marks.valid() {
         return Err("--chin must be below --crown".into());
     }
+    let id = country.ok_or("missing --country (run 'chitra passport --list')")?;
+    let spec = if id.eq_ignore_ascii_case("custom") {
+        let (w, h) = size.ok_or("--country custom needs --size WxH")?;
+        passport::custom(w, h, head.ok_or("--country custom needs --head MIN-MAX")?)?
+    } else {
+        if size.is_some() || head.is_some() {
+            return Err("--size and --head are only for --country custom".into());
+        }
+        *passport::spec(&id)
+            .ok_or_else(|| format!("unknown country '{id}'; run 'chitra passport --list'"))?
+    };
     Ok(Some(PassportArgs {
         input: input.ok_or("no input photo given")?,
-        spec: spec.ok_or("missing --country (run 'chitra passport --list')")?,
+        max_kb: max_kb.or(if sheet.is_none() { spec.max_kb } else { None }),
+        spec,
         marks,
         sheet,
         straighten,
@@ -343,14 +385,14 @@ pub fn run_passport(args: Vec<OsString>) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut layout = passport::Layout::new(a.spec, a.marks);
+    let mut layout = passport::Layout::new(&a.spec, a.marks);
     layout.straighten = a.straighten;
     let (image, dpi, copies) = match a.sheet {
         Some(paper) => {
             let opts = passport::SheetOptions::new(paper);
             let (w, h) = a.spec.pixels_at(opts.dpi);
-            let photo = passport::render(&decoded.image, a.spec, &layout, w, h);
-            let (sheet, n) = passport::print_sheet(&photo, a.spec, &opts);
+            let photo = passport::render(&decoded.image, &a.spec, &layout, w, h);
+            let (sheet, n) = passport::print_sheet(&photo, &a.spec, &opts);
             if n == 0 {
                 eprintln!(
                     "error: a {} photo does not fit on {}",
@@ -363,7 +405,7 @@ pub fn run_passport(args: Vec<OsString>) -> ExitCode {
         }
         None => {
             let (w, h) = a.spec.single_pixels();
-            let photo = passport::render(&decoded.image, a.spec, &layout, w, h);
+            let photo = passport::render(&decoded.image, &a.spec, &layout, w, h);
             (photo, passport::dpi_of(h, a.spec.height_mm), 1)
         }
     };
@@ -377,10 +419,9 @@ pub fn run_passport(args: Vec<OsString>) -> ExitCode {
         a.input
             .with_file_name(format!("{stem}-{kind}-{}.jpg", a.spec.id))
     });
-    let mut buf = Vec::new();
-    let result = passport::write_jpeg(&image, dpi, &mut buf)
+    let result = passport::encode_jpeg(&image, dpi, a.max_kb)
         .map_err(|e| e.to_string())
-        .and_then(|()| std::fs::write(&out, buf).map_err(|e| e.to_string()));
+        .and_then(|buf| std::fs::write(&out, buf).map_err(|e| e.to_string()));
     match result {
         Ok(()) => {
             println!(

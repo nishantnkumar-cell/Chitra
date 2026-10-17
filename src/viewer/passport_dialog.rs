@@ -49,8 +49,13 @@ pub struct PassportDialog {
     crown: Option<(f32, f32)>,
     chin: Option<(f32, f32)>,
     grab: Option<Grab>,
+    /// Index into SPECS; SPECS.len() means the custom size below.
     spec: usize,
+    custom_size: (f32, f32),
+    custom_head: (f32, f32),
     head_mm: f32,
+    /// Largest file for "One photo", in KB.
+    max_kb: Option<u32>,
     straighten: bool,
     background: [u8; 3],
     output: Output,
@@ -74,7 +79,10 @@ impl Default for PassportDialog {
             chin: None,
             grab: None,
             spec: 0,
+            custom_size: (35.0, 45.0),
+            custom_head: (32.0, 36.0),
             head_mm: SPECS[0].head_target_mm(),
+            max_kb: SPECS[0].max_kb,
             straighten: true,
             background: [255, 255, 255],
             output: Output::Sheet,
@@ -118,8 +126,14 @@ impl PassportDialog {
         self.loading = Some((path, rx));
     }
 
-    fn spec(&self) -> &'static PhotoSpec {
-        &SPECS[self.spec]
+    fn spec(&self) -> PhotoSpec {
+        match SPECS.get(self.spec) {
+            Some(s) => *s,
+            // The custom fields are kept valid by the controls; fall back to
+            // the first preset just in case.
+            None => passport::custom(self.custom_size.0, self.custom_size.1, self.custom_head)
+                .unwrap_or(SPECS[0]),
+        }
     }
 
     fn marks(&self) -> Option<Marks> {
@@ -131,7 +145,7 @@ impl PassportDialog {
     }
 
     fn layout(&self, marks: Marks) -> Layout {
-        let mut l = Layout::new(self.spec(), marks);
+        let mut l = Layout::new(&self.spec(), marks);
         l.head_mm = self.head_mm;
         l.straighten = self.straighten;
         l.background = self.background;
@@ -346,18 +360,62 @@ impl PassportDialog {
     }
 
     fn controls(&mut self, ui: &mut egui::Ui) {
-        let before = (self.spec, self.head_mm, self.straighten, self.background);
+        let before = (
+            self.spec,
+            self.custom_size,
+            self.custom_head,
+            self.head_mm,
+            self.straighten,
+            self.background,
+        );
+        let mut picked = None;
         egui::ComboBox::from_id_salt("passport-country")
             .width(260.0)
             .selected_text(self.spec().name)
             .show_ui(ui, |ui| {
                 for (i, s) in SPECS.iter().enumerate() {
                     if ui.selectable_value(&mut self.spec, i, s.name).changed() {
-                        self.head_mm = s.head_target_mm();
+                        picked = Some(i);
                     }
                 }
+                if ui
+                    .selectable_value(&mut self.spec, SPECS.len(), "Custom size")
+                    .changed()
+                {
+                    picked = Some(SPECS.len());
+                }
             });
+        if self.spec == SPECS.len() {
+            ui.horizontal(|ui| {
+                let (w, h) = &mut self.custom_size;
+                ui.add(egui::DragValue::new(w).range(10.0..=200.0).suffix(" mm"));
+                ui.label("x");
+                ui.add(egui::DragValue::new(h).range(10.0..=200.0).suffix(" mm"));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Head");
+                let max = self.custom_size.1 - 3.0;
+                let (lo, hi) = &mut self.custom_head;
+                ui.add(egui::DragValue::new(lo).range(5.0..=max).speed(0.5));
+                ui.label("to");
+                ui.add(
+                    egui::DragValue::new(hi)
+                        .range(5.0..=max)
+                        .speed(0.5)
+                        .suffix(" mm"),
+                );
+                *hi = hi.min(max).max(*lo);
+                *lo = lo.min(*hi);
+            });
+        }
         let s = self.spec();
+        if picked.is_some() || self.custom_head != before.2 {
+            self.head_mm = s.head_target_mm();
+            if picked.is_some() {
+                self.max_kb = s.max_kb;
+            }
+        }
+        self.head_mm = self.head_mm.clamp(s.head_mm.0, s.head_mm.1);
         ui.label(format!(
             "{}, head {}-{} mm",
             s.size_label(),
@@ -377,7 +435,15 @@ impl PassportDialog {
             ui.color_edit_button_srgb(&mut self.background)
                 .on_hover_text("Colour for any area outside the photo");
         });
-        if before != (self.spec, self.head_mm, self.straighten, self.background) {
+        let after = (
+            self.spec,
+            self.custom_size,
+            self.custom_head,
+            self.head_mm,
+            self.straighten,
+            self.background,
+        );
+        if before != after {
             self.result_dirty = true;
         }
 
@@ -399,7 +465,7 @@ impl PassportDialog {
                             ui.selectable_value(&mut self.paper, p, p.name());
                         }
                     });
-                let (c, r, _) = passport::sheet_grid(s, &SheetOptions::new(self.paper));
+                let (c, r, _) = passport::sheet_grid(&s, &SheetOptions::new(self.paper));
                 ui.label(format!("{} copies at 300 dpi, with cutting guides", c * r));
             }
             Output::Single => {
@@ -410,6 +476,15 @@ impl PassportDialog {
                     ""
                 };
                 ui.label(format!("{w} x {h} px JPEG{note}"));
+                ui.horizontal(|ui| {
+                    let mut limit = self.max_kb.is_some();
+                    if ui.checkbox(&mut limit, "At most").changed() {
+                        self.max_kb = limit.then_some(s.max_kb.unwrap_or(250));
+                    }
+                    if let Some(kb) = &mut self.max_kb {
+                        ui.add(egui::DragValue::new(kb).range(10..=10_000).suffix(" KB"));
+                    }
+                });
             }
         }
         ui.add_space(6.0);
@@ -448,7 +523,7 @@ impl PassportDialog {
                     let ppp = ui.ctx().pixels_per_point();
                     let (w, h) = ((size.x * ppp).round() as u32, (size.y * ppp).round() as u32);
                     let layout = self.layout(m.scaled(src.scale));
-                    let img = passport::render(&src.small, s, &layout, w, h);
+                    let img = passport::render(&src.small, &s, &layout, w, h);
                     Some(ui.ctx().load_texture(
                         "passport-result",
                         rgb_to_color_image(&img),
@@ -481,7 +556,7 @@ impl PassportDialog {
             }
         }
         // Where the crown goes and the band the chin must fall in.
-        let (top, chin) = passport::guides(s);
+        let (top, chin) = passport::guides(&s);
         let y = |f: f32| rect.top() + f * rect.height();
         let guide = Color32::from_rgba_unmultiplied(0, 200, 120, 200);
         painter.hline(rect.x_range(), y(top), Stroke::new(1.0, guide));
@@ -524,9 +599,10 @@ impl PassportDialog {
         let full = Arc::clone(&src.full);
         let layout = self.layout(marks);
         let sheet = (self.output == Output::Sheet).then_some(self.paper);
+        let max_kb = if sheet.is_none() { self.max_kb } else { None };
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(write(&full, spec, &layout, sheet, &out).map(|()| out));
+            let _ = tx.send(write(&full, &spec, &layout, sheet, max_kb, &out).map(|()| out));
         });
         self.message = None;
         self.saving = Some(rx);
@@ -538,6 +614,7 @@ fn write(
     spec: &PhotoSpec,
     layout: &Layout,
     sheet: Option<Paper>,
+    max_kb: Option<u32>,
     out: &Path,
 ) -> Result<(), String> {
     let (image, dpi): (RgbImage, f32) = match sheet {
@@ -557,8 +634,7 @@ fn write(
             (photo, passport::dpi_of(h, spec.height_mm))
         }
     };
-    let mut buf = Vec::new();
-    passport::write_jpeg(&image, dpi, &mut buf).map_err(|e| e.to_string())?;
+    let buf = passport::encode_jpeg(&image, dpi, max_kb).map_err(|e| e.to_string())?;
     std::fs::write(out, buf).map_err(|e| e.to_string())
 }
 

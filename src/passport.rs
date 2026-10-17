@@ -30,6 +30,8 @@ pub struct PhotoSpec {
     pub top_mm: f32,
     /// Exact pixel size for online applications, where the authority sets one.
     pub digital_px: Option<(u32, u32)>,
+    /// Largest file the authority's upload form accepts, in KB.
+    pub max_kb: Option<u32>,
     /// What the authority says about the background.
     pub background: &'static str,
 }
@@ -70,6 +72,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (29.0, 34.0),
         top_mm: 5.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain light grey or cream",
     },
     PhotoSpec {
@@ -80,6 +83,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (32.0, 36.0),
         top_mm: 4.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain white or very light grey",
     },
     PhotoSpec {
@@ -90,6 +94,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (25.4, 34.9),
         top_mm: 5.0,
         digital_px: Some((1200, 1200)),
+        max_kb: None,
         background: "Plain white or off-white",
     },
     PhotoSpec {
@@ -100,6 +105,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (36.0, 38.0),
         top_mm: 3.0,
         digital_px: Some((630, 810)),
+        max_kb: Some(250),
         background: "Plain white only",
     },
     PhotoSpec {
@@ -110,6 +116,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (25.4, 34.9),
         top_mm: 5.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain white or off-white",
     },
     PhotoSpec {
@@ -120,6 +127,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (31.0, 36.0),
         top_mm: 9.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain white or light colour",
     },
     PhotoSpec {
@@ -130,6 +138,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (32.0, 36.0),
         top_mm: 4.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain white or light grey",
     },
     PhotoSpec {
@@ -140,6 +149,7 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (28.0, 33.0),
         top_mm: 4.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain white",
     },
     PhotoSpec {
@@ -150,9 +160,34 @@ pub const SPECS: &[PhotoSpec] = &[
         head_mm: (32.0, 36.0),
         top_mm: 4.0,
         digital_px: None,
+        max_kb: None,
         background: "Plain, no pattern",
     },
 ];
+
+/// A size the user types in. The head sits 40% of the spare height below the
+/// top edge, which matches most official layouts.
+pub fn custom(width_mm: f32, height_mm: f32, head_mm: (f32, f32)) -> Result<PhotoSpec, String> {
+    let size_ok = |v: f32| (10.0..=200.0).contains(&v);
+    if !size_ok(width_mm) || !size_ok(height_mm) {
+        return Err("photo sides must be between 10 and 200 mm".into());
+    }
+    if !(head_mm.0 > 0.0 && head_mm.0 <= head_mm.1 && head_mm.1 < height_mm - 2.0) {
+        return Err("head must be at least 2 mm shorter than the photo".into());
+    }
+    let spare = height_mm - (head_mm.0 + head_mm.1) / 2.0;
+    Ok(PhotoSpec {
+        id: "custom",
+        name: "Custom size",
+        width_mm,
+        height_mm,
+        head_mm,
+        top_mm: (spare * 0.4).min(height_mm - head_mm.1 - 1.0),
+        digital_px: None,
+        max_kb: None,
+        background: "As required",
+    })
+}
 
 pub fn spec(id: &str) -> Option<&'static PhotoSpec> {
     let id = id.trim().to_ascii_lowercase();
@@ -534,10 +569,36 @@ pub fn dpi_of(px: u32, mm: f32) -> f32 {
     px as f32 / (mm / 25.4)
 }
 
-/// Write a JPEG (quality 95) tagged with its print resolution, so printing at
-/// "actual size" gives the right physical size. No EXIF is written.
-pub fn write_jpeg<W: Write>(img: &RgbImage, dpi: f32, out: W) -> Result<(), EncodeError> {
-    let mut enc = JpegEncoder::new_with_quality(out, 95);
+/// Encode a JPEG for saving: quality 95, or the highest quality (down to 30)
+/// that fits in `max_kb` when a limit is given.
+pub fn encode_jpeg(img: &RgbImage, dpi: f32, max_kb: Option<u32>) -> Result<Vec<u8>, EncodeError> {
+    let mut quality = 95;
+    loop {
+        let mut buf = Vec::new();
+        write_jpeg(img, dpi, quality, &mut buf)?;
+        match max_kb {
+            Some(kb) if buf.len() > kb as usize * 1024 => {
+                if quality <= 30 {
+                    return Err(EncodeError(format!(
+                        "the photo does not fit in {kb} KB even at low quality"
+                    )));
+                }
+                quality -= 5;
+            }
+            _ => return Ok(buf),
+        }
+    }
+}
+
+/// Write a JPEG tagged with its print resolution, so printing at "actual
+/// size" gives the right physical size. No EXIF is written.
+pub fn write_jpeg<W: Write>(
+    img: &RgbImage,
+    dpi: f32,
+    quality: u8,
+    out: W,
+) -> Result<(), EncodeError> {
+    let mut enc = JpegEncoder::new_with_quality(out, quality.clamp(1, 100));
     enc.set_pixel_density(PixelDensity::dpi(dpi.round().clamp(1.0, 65535.0) as u16));
     enc.write_image(
         img.as_raw(),
@@ -683,10 +744,34 @@ mod tests {
     #[test]
     fn jpeg_carries_dpi() {
         let mut buf = Vec::new();
-        write_jpeg(&RgbImage::new(10, 10), 300.0, &mut buf).unwrap();
+        write_jpeg(&RgbImage::new(10, 10), 300.0, 95, &mut buf).unwrap();
         // JFIF APP0: units = 1 (inches), then 300 x 300.
         let jfif = buf.windows(5).position(|w| w == b"JFIF\0").unwrap();
         assert_eq!(&buf[jfif + 7..jfif + 12], &[1, 1, 44, 1, 44]);
+    }
+
+    #[test]
+    fn size_limit_lowers_quality() {
+        // Noise compresses badly, so a tight limit forces a lower quality.
+        let mut img = RgbImage::new(300, 300);
+        for (i, p) in img.pixels_mut().enumerate() {
+            let v = (i as u32).wrapping_mul(2_654_435_761) >> 24;
+            *p = Rgb([v as u8, (v >> 1) as u8, (v >> 2) as u8]);
+        }
+        let free = encode_jpeg(&img, 300.0, None).unwrap();
+        let kb = (free.len() / 1024 / 2) as u32;
+        let small = encode_jpeg(&img, 300.0, Some(kb)).unwrap();
+        assert!(small.len() <= kb as usize * 1024 && small.len() < free.len());
+        assert!(encode_jpeg(&img, 300.0, Some(1)).is_err());
+    }
+
+    #[test]
+    fn custom_sizes() {
+        let c = custom(40.0, 50.0, (30.0, 34.0)).unwrap();
+        assert!(c.top_mm > 0.0 && c.top_mm + c.head_mm.1 < c.height_mm);
+        assert!(custom(5.0, 50.0, (30.0, 34.0)).is_err());
+        assert!(custom(40.0, 50.0, (34.0, 30.0)).is_err());
+        assert!(custom(40.0, 50.0, (30.0, 49.0)).is_err());
     }
 
     #[test]

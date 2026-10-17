@@ -185,7 +185,10 @@ with the head guides drawn on it. Then save either:
 Files are JPEGs tagged with their print resolution, so printing at actual
 size gives the right physical size, and carry no EXIF (no location or camera
 data). A slider moves the head size within the allowed range, and any area
-the photo does not cover is filled with a colour you pick.
+the photo does not cover is filled with a colour you pick. For upload forms
+with a size limit, **At most N KB** lowers the JPEG quality until the file
+fits (on by default at 250 KB for India). **Custom size** takes any photo and
+head size in mm.
 
 | ID | Photo | Size | Head (chin to crown) |
 |---|---|---|---|
@@ -205,6 +208,7 @@ works from a terminal, given the two points in pixels:
 ```
 chitra-cli passport me.jpg --country uk --crown 1520,610 --chin 1530,1640 --sheet 6x4
 chitra-cli passport me.jpg --country india --crown 1520,610 --chin 1530,1640 -o upload.jpg
+chitra-cli passport me.jpg --country custom --size 40x50 --head 30-34 --crown 1520,610 --chin 1530,1640 --sheet a4
 chitra-cli passport --list
 ```
 
