@@ -154,6 +154,7 @@ Exit codes: 0 all converted, 1 some files failed (or none were found), 2 bad arg
 | `-t, --to FORMAT` | jpg, jxl, png, gif, bmp, webp, avif (HEIC can be read, not written) |
 | `-q, --quality N` | 1-100 for JPEG, WebP, JPEG XL and AVIF (default 90); palette quality for GIF |
 | `--lossless` | Lossless WebP / JPEG XL (see below) |
+| `--reencode-jpeg` | JPEG to JPEG XL: re-encode the pixels instead of repacking the JPEG |
 | `-s, --resize SIZE` | `2048` longest side, `50%`, or `1920x1080` box; never enlarges unless `--upscale` |
 | `-o, --out DIR` | Output folder (default: next to each input) |
 | `-n, --rename PATTERN` | Tokens `{name}` `{parent}` `{n}` `{n:03}` `{ext}` |
@@ -227,8 +228,8 @@ you must publish its source under the same licence.
 
 The lossy WebP and JPEG XL encoders (`zenwebp`, `jxl-encoder`) are
 AGPL-3.0. `cargo build --release --no-default-features` leaves them out, and
-then writes WebP and JPEG XL lossless only; viewing and every other format
-are identical in both builds. The lossy encoders do not build on Apple Silicon
+then writes WebP and JPEG XL lossless only and does not repack JPEGs;
+viewing and every other format are identical in both builds. The lossy encoders do not build on Apple Silicon
 yet, so macOS ARM builds need `--no-default-features`.
 
 ## Memory safety
@@ -245,6 +246,7 @@ files is memory safe:
 | HEIF/HEIC decode | `heifer` (its own HEVC decoder, no `unsafe`; output matches libheif) |
 | JPEG XL lossless encode | `zune-jpegxl` |
 | Lossy WebP / JPEG XL encode | `zenwebp`, `jxl-encoder` |
+| JPEG to JPEG XL repacking | `jxl-encoder` with `zenjpeg` (vendored with a build fix) |
 | UI | `eframe`/`egui` (OpenGL) |
 
 Chitra's own library code is `#![forbid(unsafe_code)]`. The only `unsafe` in

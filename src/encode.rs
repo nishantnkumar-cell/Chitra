@@ -1,7 +1,8 @@
 //! Encoding pixels to files. All encoders are pure Rust:
 //! JPEG, PNG, GIF, BMP via `image`; lossless WebP via `image-webp`; lossless
 //! JPEG XL via `zune-jpegxl`. With the `lossy-encoders` feature, lossy WebP
-//! (`zenwebp`) and lossy JPEG XL (`jxl-encoder`) are added.
+//! (`zenwebp`) and lossy JPEG XL (`jxl-encoder`) are added, along with
+//! lossless repacking of JPEG files into JPEG XL ([`JpegRepack`]).
 
 use std::fmt;
 use std::io::Write;
@@ -304,6 +305,100 @@ fn encode_jxl<W: Write>(image: &DynamicImage, out: &mut W) -> Result<(), EncodeE
         .map_err(|e| EncodeError(format!("{e:?}")))?;
     out.write_all(&buf)?;
     Ok(())
+}
+
+/// True when this build can repack JPEG files into JPEG XL.
+pub const JPEG_REPACK: bool = LOSSY_ENCODERS;
+
+/// A JPEG file ready to be repacked into JPEG XL. Repacking stores the JPEG's
+/// own compressed data more efficiently instead of decoding the pixels and
+/// compressing them again, so the result is about 20% smaller than the JPEG,
+/// shows exactly the same pixels, and (with metadata kept) can be turned back
+/// into the original file byte for byte.
+pub struct JpegRepack {
+    width: u32,
+    height: u32,
+    #[cfg(feature = "lossy-encoders")]
+    data: jxl_encoder::jpeg::JpegData,
+}
+
+impl JpegRepack {
+    /// Parse a JPEG file. `None` when this build can't repack it, or when the
+    /// photo is rotated by its EXIF orientation tag: JPEG XL viewers ignore
+    /// that tag, so the repacked photo would show sideways.
+    pub fn parse(jpeg: &[u8]) -> Option<JpegRepack> {
+        if !JPEG_REPACK {
+            return None;
+        }
+        use image::ImageDecoder;
+        let mut header = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(jpeg)).ok()?;
+        let (width, height) = header.dimensions();
+        // The DCT coefficients take 2 bytes per sample, up to 3 samples a pixel.
+        if width as u64 * height as u64 * 6 > crate::decode::MAX_ALLOC {
+            return None;
+        }
+        let exif = header.exif_metadata().ok().flatten();
+        let orientation = exif
+            .and_then(crate::metadata::normalize_exif)
+            .map(|e| crate::metadata::orientation(&e))
+            .unwrap_or(image::metadata::Orientation::NoTransforms);
+        if orientation != image::metadata::Orientation::NoTransforms {
+            return None;
+        }
+        #[cfg(feature = "lossy-encoders")]
+        {
+            let data = crate::isolate(|| jxl_encoder::jpeg::read_jpeg(jpeg))
+                .ok()?
+                .ok()?;
+            if (data.width, data.height) != (width, height) {
+                return None;
+            }
+            Some(JpegRepack {
+                width,
+                height,
+                data,
+            })
+        }
+        #[cfg(not(feature = "lossy-encoders"))]
+        {
+            let _ = (width, height);
+            None
+        }
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Write the JPEG XL file. With `keep_metadata` it also carries the EXIF,
+    /// XMP and the data needed to rebuild the original JPEG exactly.
+    pub fn encode<W: Write>(&self, keep_metadata: bool, mut out: W) -> Result<(), EncodeError> {
+        #[cfg(feature = "lossy-encoders")]
+        {
+            use jxl_encoder::jpeg::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container};
+            let bytes = crate::isolate(|| {
+                if keep_metadata {
+                    encode_jpeg_to_jxl_container(&self.data)
+                } else {
+                    encode_jpeg_to_jxl(&self.data)
+                }
+            })
+            .map_err(EncodeError)?
+            .map_err(|e| EncodeError(e.to_string()))?;
+            out.write_all(&bytes)?;
+            out.flush()?;
+            Ok(())
+        }
+        #[cfg(not(feature = "lossy-encoders"))]
+        {
+            let _ = (keep_metadata, &mut out);
+            Err(EncodeError("JPEG repacking is not built in".into()))
+        }
+    }
 }
 
 fn ne_bytes(samples: &[u16]) -> Vec<u8> {

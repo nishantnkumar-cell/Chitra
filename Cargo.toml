@@ -39,13 +39,15 @@ windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 [patch.crates-io]
 # Fixes decoding AVIF images with odd widths; see vendor/oxideav-avif/PATCHED.md.
 oxideav-avif = { path = "vendor/oxideav-avif" }
+# Builds with the magetypes version held in Cargo.lock; see vendor/zenjpeg/PATCHED.md.
+zenjpeg = { path = "vendor/zenjpeg" }
 
 [features]
 default = ["lossy-encoders"]
-# Lossy WebP and JPEG XL output via zenwebp and jxl-encoder (pure Rust, but
-# licensed AGPL-3.0 or commercial). Build with --no-default-features for a
+# Lossy WebP and JPEG XL output via zenwebp and jxl-encoder, and lossless
+# JPEG to JPEG XL repacking (pure Rust, but licensed AGPL-3.0 or commercial). Build with --no-default-features for a
 # binary without them that writes WebP and JPEG XL lossless only.
-lossy-encoders = ["dep:zenwebp", "dep:jxl-encoder"]
+lossy-encoders = ["dep:zenwebp", "dep:jxl-encoder", "jxl-encoder/jpeg-reencoding"]
 
 [build-dependencies]
 winresource = "0.1"

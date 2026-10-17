@@ -19,7 +19,7 @@ use crate::format::Format;
 use crate::metadata;
 
 /// Largest single allocation a decoder may make (2 GiB, enough for ~500 MP RGBA).
-const MAX_ALLOC: u64 = 2 << 30;
+pub(crate) const MAX_ALLOC: u64 = 2 << 30;
 /// Animated files with more frames than this are shown as a still image.
 const MAX_FRAMES: usize = 2000;
 

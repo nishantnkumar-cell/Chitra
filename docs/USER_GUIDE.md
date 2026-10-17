@@ -144,6 +144,11 @@ Click **Convert** or press `Ctrl+S`. Choose:
 - **Format:** JPEG, JPEG XL, PNG, GIF, BMP, WebP or AVIF. HEIC photos can be
   converted *from*, but not *to*.
 - **Quality:** 1 to 100 (90 by default), or **Lossless** for WebP and JPEG XL.
+- **JPEG files** (JPEG XL only): **Repack losslessly** is on by default. A
+  JPEG converted to JPEG XL keeps its own compressed data, so the new file is
+  about 20% smaller with exactly the same picture, and quality settings don't
+  apply. Photos you resize, or that are turned by their EXIF orientation, are
+  re-encoded instead. Turn it off to re-encode every JPEG at the chosen quality.
 - **Resize** (optional): limit the longest side. Small photos are never
   enlarged.
 - **Save to:** the same folder as each photo (default) or a folder you choose.

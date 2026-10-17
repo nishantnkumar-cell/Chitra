@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 
 use crate::decode::{DecodeOptions, decode_file};
-use crate::encode::{EncodeOptions, encode, supports_exif};
+use crate::encode::{EncodeError, EncodeOptions, JpegRepack, encode, supports_exif};
 use crate::folder::natural_cmp;
 use crate::format::{Format, is_supported_path};
 use crate::metadata;
@@ -64,6 +64,9 @@ pub struct ConvertOptions {
     pub quality: u8,
     /// Lossless WebP / JPEG XL even when lossy encoders are available.
     pub lossless: bool,
+    /// JPEG to JPEG XL: repack the JPEG data losslessly (smaller than the JPEG,
+    /// no quality loss) instead of re-encoding the pixels. Not used when resizing.
+    pub jpeg_repack: bool,
     pub resize: Option<ResizeSpec>,
     pub upscale: bool,
     /// Output folder; `None` writes next to each input.
@@ -86,6 +89,7 @@ impl ConvertOptions {
             format,
             quality: 90,
             lossless: false,
+            jpeg_repack: true,
             resize: None,
             upscale: false,
             out_dir: None,
@@ -371,6 +375,9 @@ pub fn convert_one(job: &Job, opts: &ConvertOptions) -> Result<Outcome, String> 
     let in_bytes = fs::metadata(&job.input)
         .map(|m| m.len())
         .map_err(|e| format!("cannot read file: {e}"))?;
+    if let Some(outcome) = repack_jpeg(job, opts, in_bytes)? {
+        return Ok(outcome);
+    }
     let animate = opts.keep_animation && opts.format == Format::Gif;
     let mut decoded =
         decode_file(&job.input, DecodeOptions { animation: animate }).map_err(|e| e.to_string())?;
@@ -401,30 +408,67 @@ pub fn convert_one(job: &Job, opts: &ConvertOptions) -> Result<Outcome, String> 
         enc.icc = decoded.icc.clone();
     }
 
-    if let Some(dir) = job.output.parent().filter(|d| !d.as_os_str().is_empty()) {
-        fs::create_dir_all(dir)
-            .map_err(|e| format!("cannot create folder {}: {e}", dir.display()))?;
-    }
-    let tmp = temp_path(&job.output);
-    let write = || -> Result<(), String> {
-        let file =
-            fs::File::create(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-        encode(&decoded.image, &decoded.frames, &enc, BufWriter::new(file))
-            .map_err(|e| e.to_string())?;
-        fs::rename(&tmp, &job.output)
-            .map_err(|e| format!("cannot write {}: {e}", job.output.display()))
-    };
-    if let Err(e) = write() {
-        let _ = fs::remove_file(&tmp);
-        return Err(e);
-    }
-    let out_bytes = fs::metadata(&job.output).map(|m| m.len()).unwrap_or(0);
+    let out_bytes = write_output(&job.output, |file| {
+        encode(&decoded.image, &decoded.frames, &enc, file)
+    })?;
     Ok(Outcome::Converted {
         width: decoded.image.width(),
         height: decoded.image.height(),
         in_bytes,
         out_bytes,
     })
+}
+
+/// JPEG to JPEG XL without touching the pixels, when the options allow it.
+/// `None` means convert the usual way.
+fn repack_jpeg(job: &Job, opts: &ConvertOptions, in_bytes: u64) -> Result<Option<Outcome>, String> {
+    if opts.format != Format::JpegXl || !opts.jpeg_repack || !crate::encode::JPEG_REPACK {
+        return Ok(None);
+    }
+    if Format::from_path(&job.input) != Some(Format::Jpeg) {
+        return Ok(None);
+    }
+    let bytes = fs::read(&job.input).map_err(|e| format!("cannot read file: {e}"))?;
+    let Some(jpeg) = JpegRepack::parse(&bytes) else {
+        return Ok(None);
+    };
+    let (width, height) = (jpeg.width(), jpeg.height());
+    if let Some(spec) = opts.resize
+        && target_size(width, height, spec, opts.upscale) != (width, height)
+    {
+        return Ok(None);
+    }
+    let out_bytes = write_output(&job.output, |file| jpeg.encode(opts.keep_metadata, file))?;
+    Ok(Some(Outcome::Converted {
+        width,
+        height,
+        in_bytes,
+        out_bytes,
+    }))
+}
+
+/// Write through a temporary file and rename it into place, so a crash or
+/// error never leaves a half-written output. Returns the output's size.
+fn write_output<F>(output: &Path, write: F) -> Result<u64, String>
+where
+    F: FnOnce(BufWriter<fs::File>) -> Result<(), EncodeError>,
+{
+    if let Some(dir) = output.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create folder {}: {e}", dir.display()))?;
+    }
+    let tmp = temp_path(output);
+    let result = (|| -> Result<(), String> {
+        let file =
+            fs::File::create(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+        write(BufWriter::new(file)).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, output).map_err(|e| format!("cannot write {}: {e}", output.display()))
+    })();
+    if let Err(e) = result {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(fs::metadata(output).map(|m| m.len()).unwrap_or(0))
 }
 
 fn temp_path(output: &Path) -> PathBuf {

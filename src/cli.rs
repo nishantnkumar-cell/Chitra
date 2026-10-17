@@ -33,6 +33,8 @@ CONVERT OPTIONS:
     -q, --quality N          Quality 1-100 for JPEG, WebP, JPEG XL and AVIF,
                              default 90; for GIF, palette quality
         --lossless           Lossless WebP / JPEG XL
+        --reencode-jpeg      JPEG to JPEG XL: re-encode the pixels instead of
+                             repacking the JPEG data losslessly
     -s, --resize SIZE        2048 = longest side, 50% = scale, 1920x1080 = fit in box
         --upscale            Allow --resize to enlarge small images
     -o, --out DIR            Output folder (default: next to each input)
@@ -49,6 +51,9 @@ CONVERT OPTIONS:
 NOTES:
     WebP and JPEG XL are written lossy unless --lossless is given (builds
     without the lossy-encoders feature always write them lossless).
+    JPEG files converted to JPEG XL are repacked: about 20% smaller, no
+    quality loss, and quality settings don't apply. Photos that are resized
+    or rotated by their EXIF orientation are re-encoded instead.
     EXIF orientation is applied to the pixels, so outputs always display upright.
 
 PASSPORT OPTIONS:
@@ -112,6 +117,7 @@ fn parse_convert(
             }
             Long("upscale") => opts.upscale = true,
             Long("lossless") => opts.lossless = true,
+            Long("reencode-jpeg") => opts.jpeg_repack = false,
             Short('o') | Long("out") => opts.out_dir = Some(PathBuf::from(parser.value()?)),
             Short('n') | Long("rename") => opts.rename = parser.value()?.string()?,
             Short('r') | Long("recursive") => opts.recursive = true,
