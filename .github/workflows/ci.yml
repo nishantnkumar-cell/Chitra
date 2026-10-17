@@ -9,9 +9,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Size budget for the Windows exe, in bytes (18 MiB). HEIC and AVIF add
+  # Size budget for the Windows exe, in bytes (20 MiB). HEIC and AVIF add
   # about 2.3 MB and unwinding for per-file crash isolation about 2.7 MB.
-  MAX_EXE_BYTES: 18874368
+  MAX_EXE_BYTES: 20971520
 
 # Read-only token by default; only the release job may write.
 permissions:
@@ -58,10 +58,9 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      # jxl-encoder's SIMD crate does not build on Apple Silicon yet, so macOS
-      # tests the lossless-only build.
-      - if: runner.os != 'macOS'
-        run: cargo test
+      # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
+      # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
+      - run: cargo test
       - run: cargo test --no-default-features
 
   windows-release:
