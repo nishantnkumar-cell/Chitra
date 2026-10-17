@@ -51,6 +51,12 @@ tar xzf chitra-<version>-linux-x86_64.tar.gz
 chitra-<version>-linux-x86_64/install.sh        # --uninstall removes it
 ```
 
+The Open and Save dialogs come from the desktop portal, which KDE Plasma and
+GNOME install by default. On a minimal system or WSL, install it yourself or
+the dialogs will not open, for example on Ubuntu:
+`sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk`
+(`xdg-desktop-portal-kde` on Plasma).
+
 Either way Chitra appears in the app menu and under **Open With** in Dolphin and
 Files for every format it reads. On both desktops it:
 
