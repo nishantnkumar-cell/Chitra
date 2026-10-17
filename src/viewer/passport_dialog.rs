@@ -246,7 +246,14 @@ impl PassportDialog {
             let photo_size = Vec2::new((avail.x - side_w - 16.0).max(200.0), avail.y.max(300.0));
             ui.allocate_ui(photo_size, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(self.hint());
+                    // Keep two lines for the hint so the photo below does
+                    // not jump when a shorter hint replaces a longer one.
+                    let rows = 2.0 * ui.text_style_height(&egui::TextStyle::Body)
+                        + ui.spacing().item_spacing.y;
+                    ui.allocate_ui(Vec2::new(ui.available_width(), rows), |ui| {
+                        ui.set_min_height(rows);
+                        ui.label(self.hint());
+                    });
                     self.photo(ui);
                 });
             });

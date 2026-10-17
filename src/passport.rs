@@ -493,24 +493,43 @@ impl SheetOptions {
 
 /// Columns, rows and whether the paper is portrait, for the most copies.
 pub fn sheet_grid(spec: &PhotoSpec, opts: &SheetOptions) -> (u32, u32, bool) {
+    let (cols, rows, portrait, _) = sheet_layout(spec, opts);
+    (cols, rows, portrait)
+}
+
+/// Like `sheet_grid`, plus the gap used. When butting the photos edge to
+/// edge with no border fits more copies (2x2 inch photos on 6x4 paper go
+/// from 2 to 6), the margin and gap are dropped and the cut lines shared.
+fn sheet_layout(spec: &PhotoSpec, opts: &SheetOptions) -> (u32, u32, bool, f32) {
     let (long, short) = opts.paper.size_mm();
-    let fit = |avail: f32, size: f32| {
-        (((avail - 2.0 * opts.margin_mm + opts.gap_mm) / (size + opts.gap_mm)).floor()).max(0.0)
-            as u32
+    let grid = |margin: f32, gap: f32| {
+        // The small slack keeps exact fits such as 3 x 50.8 = 152.4 mm.
+        let fit = |avail: f32, size: f32| {
+            ((avail - 2.0 * margin + gap) / (size + gap) + 1e-3)
+                .floor()
+                .max(0.0) as u32
+        };
+        let landscape = (fit(long, spec.width_mm), fit(short, spec.height_mm), false);
+        let portrait = (fit(short, spec.width_mm), fit(long, spec.height_mm), true);
+        if portrait.0 * portrait.1 > landscape.0 * landscape.1 {
+            portrait
+        } else {
+            landscape
+        }
     };
-    let landscape = (fit(long, spec.width_mm), fit(short, spec.height_mm), false);
-    let portrait = (fit(short, spec.width_mm), fit(long, spec.height_mm), true);
-    if portrait.0 * portrait.1 > landscape.0 * landscape.1 {
-        portrait
+    let spaced = grid(opts.margin_mm, opts.gap_mm);
+    let tight = grid(0.0, 0.0);
+    if tight.0 * tight.1 > spaced.0 * spaced.1 {
+        (tight.0, tight.1, tight.2, 0.0)
     } else {
-        landscape
+        (spaced.0, spaced.1, spaced.2, opts.gap_mm)
     }
 }
 
 /// Lay out as many copies of `photo` as fit, with thin grey cutting guides.
 /// `photo` should be rendered at `spec.pixels_at(opts.dpi)`.
 pub fn print_sheet(photo: &RgbImage, spec: &PhotoSpec, opts: &SheetOptions) -> (RgbImage, u32) {
-    let (cols, rows, portrait) = sheet_grid(spec, opts);
+    let (cols, rows, portrait, gap_mm) = sheet_layout(spec, opts);
     let (long, short) = opts.paper.size_mm();
     let (paper_w, paper_h) = if portrait {
         (short, long)
@@ -520,7 +539,11 @@ pub fn print_sheet(photo: &RgbImage, spec: &PhotoSpec, opts: &SheetOptions) -> (
     let (sw, sh) = (mm_to_px(paper_w, opts.dpi), mm_to_px(paper_h, opts.dpi));
     let mut sheet = RgbImage::from_pixel(sw, sh, Rgb([255, 255, 255]));
     let (pw, ph) = (photo.width(), photo.height());
-    let gap = mm_to_px(opts.gap_mm, opts.dpi);
+    let gap = if gap_mm > 0.0 {
+        mm_to_px(gap_mm, opts.dpi)
+    } else {
+        0
+    };
     let grid_w = cols * pw + cols.saturating_sub(1) * gap;
     let grid_h = rows * ph + rows.saturating_sub(1) * gap;
     let left = sw.saturating_sub(grid_w) / 2;
@@ -728,7 +751,7 @@ mod tests {
         let opts = SheetOptions::new(Paper::Photo6x4);
         assert_eq!(sheet_grid(uk, &opts), (4, 2, false));
         let us = spec("us").unwrap();
-        assert_eq!(sheet_grid(us, &opts), (2, 1, false));
+        assert_eq!(sheet_grid(us, &opts), (3, 2, false));
         let a4 = SheetOptions::new(Paper::A4);
         let (c, r, _) = sheet_grid(uk, &a4);
         assert!(c * r >= 20, "{c}x{r}");
@@ -739,6 +762,14 @@ mod tests {
         assert_eq!((sheet.width(), sheet.height()), (1800, 1200));
         let black = sheet.pixels().filter(|p| p.0 == [0, 0, 0]).count();
         assert_eq!(black, 8 * 413 * 531);
+
+        // Six 2x2 inch photos butt together on 6x4 paper.
+        let photo = RgbImage::from_pixel(600, 600, Rgb([0, 0, 0]));
+        let (sheet, n) = print_sheet(&photo, us, &opts);
+        assert_eq!(n, 6);
+        assert_eq!((sheet.width(), sheet.height()), (1800, 1200));
+        let white = sheet.pixels().filter(|p| p.0 == [255, 255, 255]).count();
+        assert_eq!(white, 0);
     }
 
     #[test]
