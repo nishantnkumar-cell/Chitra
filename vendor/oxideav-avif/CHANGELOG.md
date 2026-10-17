@@ -1,0 +1,2886 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.0.15](https://github.com/OxideAV/oxideav-avif/compare/v0.0.14...v0.0.15) - 2026-10-17
+
+### Other
+
+- every coded item through the AV1 still encoder at Fast effort — speed / threads options, execution budget on the encoder, 12 MP in 6.1 s serial / 1.3 s on 8 workers (was 376 s)
+- grid tiles decode in parallel under the execution budget
+- decode_threads — 12 MP tiled 4:2:0 still, serial vs budgeted decode
+- honour the image-gateway contract — quality → base_q_idx, 27 declared input layouts, lossy packed RGB as Y′CbCr, option schemas, decoder execution context
+
+### Added
+
+- **`quality` on the registry encoder (image-gateway contract, round
+  476).** The framework's advisory `quality` option (0..=100, 100 =
+  lossless, the default) maps onto the AV1 quantiser when `q` is not
+  given — `base_q_idx = ((100 − quality) × 255 + 50) / 100`, the
+  `EncodeOptions::with_quality` curve (90 → 26, 50 → 128, 10 → 230) —
+  and onto the alpha auxiliary when `alpha_q` is not given; an
+  explicit `q` / `alpha_q` wins; neither given keeps the lossless
+  bytes of every earlier release. `quality_to_base_q_idx` is public.
+- **Declared input layouts.** `ENCODER_PIXEL_FORMATS` lists the 27
+  layouts the registry encoder accepts (planar Y′CbCr 8 / 10 / 12-bit
+  incl. `YuvJ*`, grey 8 / 10 / 12, packed `Rgb24` / `Rgba` / `Bgr24` /
+  `Bgra`, planar `Gbrp(a)` 8 / 10 / 12, `Yuva420P`, `Ya8`) and is the
+  registry entry's `accepted_pixel_formats`; `lossy` and `lossless`
+  are both declared. Any other label is a typed `Unsupported` naming
+  it.
+- **Lossy packed RGB codes as Y′CbCr.** A packed RGB(A) / BGR(A) frame
+  at a lossy quality is converted to Y′CbCr (the stream's signalled
+  matrix / range where given, else the MIAF default BT.601 full
+  range) and coded in the new `chroma` option's layout (`420`, the
+  default, `422`, `444`; odd extents promote to 4:4:4); the lossless
+  identity-matrix 4:4:4 coding (byte-exact) stays at quality 100.
+- **Option schemas.** `AvifEncoderOptions` (`quality`, `q`,
+  `alpha_q`, `chroma`, `premultiplied`) and `AvifDecoderOptions`
+  (`gain_map`, `reference_white`, `threads`, `max_width`,
+  `max_height`, `max_pixels`, `max_bytes`, `strict`, `layer`) are
+  declared on the registry entry (`encoder_options` /
+  `decoder_options`), so the gateway hands `quality` through and
+  `oxideav list` can enumerate the knobs. `make_encoder` /
+  `AvifEncoder::try_with_params` and `AvifDecoder::with_params` parse
+  strictly (an unknown key, a malformed or out-of-range value is
+  `InvalidData`); `AvifEncoder::with_params` keeps ignoring them.
+- **Execution context on the decoder.** `AvifDecoder` honours
+  `Decoder::set_execution_context`: the worker budget is handed to the
+  AV1 decoder of every coded item and sequence sample (oxideav-av1
+  0.1.21 walks a multi-tile intra frame tile-parallel and runs its
+  post-filters by row band, byte-identical at any budget). The
+  `threads` decoder option (`DecodeOptions::threads` /
+  `with_threads`, `worker_count`) fixes the budget explicitly and wins
+  over the context; `AvifDecoder::effective_options` / `threads`
+  report what the next decode runs with. A 12 MP tiled 4:2:0 still
+  (`examples/decode_threads`) decodes in 0.34 s serial → 0.07 s on 8
+  workers on the development machine.
+- **Grid tiles decode in parallel under the budget.** A `grid`
+  primary's distinct tiles are decoded round-robin on up to `threads`
+  workers (each tile on a child context with the AV1 budget split
+  evenly; outputs memoised, the decode budget and the cycle guard
+  kept, the first failing tile in tile order reported), so a camera-
+  style grid of single-tile items also spends the budget: the 12 MP
+  picture as a 4 × 3 grid decodes in 0.31 s serial → 0.07 s on 8
+  workers (4.7×), byte-identical.
+- `Decoder::output_pixel_format` is implemented (the label of the
+  last decoded file, `AvifDecoder::output_format`), and the encoder's
+  `output_params` carry the coded label after a frame (`Gbrp8` for
+  lossless packed RGB, `YuvJ420P` for a lossy one, `YuvJ*` for an
+  8-bit `Yuv*` input written without `colr`).
+
+- **`speed` / `threads` on the registry encoder; `EncodeOptions::speed`
+  / `threads`.** `speed` = `fast` (default) / `balanced` / `thorough`
+  ([`EncodeSpeed`]); `threads` = the AV1 tile-search workers (`0` =
+  the budget of `Encoder::set_execution_context`, which the encoder now
+  honours). The tile layout of every coded item is derived from the
+  picture size alone (`TILE_LAYOUT_THREADS` = 8 nominal workers: tiles
+  ≥ 256 × 128 px, at most 8), so the bytes never depend on the budget.
+
+### Changed
+
+- **Every coded item goes through the AV1 still encoder
+  (`oxideav_av1::encoder::still`) at `Fast` effort instead of the
+  exhaustive KEY-frame search.** Image items are coded
+  `still_picture = 1` with the reduced still-picture header (image-
+  sequence samples keep a full non-still header), `color_range` is
+  signalled natively instead of spliced into the sequence header, and
+  the tile layout follows the picture size. A 12 MP 4:2:0 picture
+  through the registry encoder at quality 50: 6.1 s serial / 1.3 s on
+  8 workers (identical bytes), where the previous search took 376 s
+  for the same picture as a 4 × 3 grid; the exhaustive search is
+  `speed=thorough` (`EncodeSpeed::Thorough`) and codes ~34 % fewer
+  bytes on that synthetic picture at the same `base_q_idx`. Lossless
+  (`base_q_idx = 0`) stays sample-exact; the 16 × 16 ladder: Yuv420P
+  592 B exact → quality 50 324 B 37.4 dB → quality 10 294 B 25.0 dB.
+  File bytes differ from every earlier release for the same input.
+- `make_encoder` refuses an option bag it cannot parse instead of
+  silently coding at the defaults (see above).
+
+## [0.0.14](https://github.com/OxideAV/oxideav-avif/compare/v0.0.13...v0.0.14) - 2026-10-05
+
+### Other
+
+- follow heif 0.0.9 — range requirement, RgbImage16 / Plane / LimitExceeded names
+- fallible from_rgb8/from_rgba8, encode_all (burst + timed avis), exclude tests/fuzz — image-crate API fleet sweep
+
+### Changed
+
+- `oxideav-heif` requirement is `>=0.0.9, <0.1` (a `0.0.x` caret requirement is exact, so `0.0.7` kept avif on a heif without the registry containers); adopted the 0.0.9 names (`RgbImage16`, `Plane`, `HeifError::LimitExceeded`).
+
+### Changed
+
+- **Fallible constructors (`IMAGE_CRATE_API` fleet sweep, breaking).**
+  `AvifImage::from_rgb8` / `from_rgba8` return `Result<AvifImage,
+  AvifError>` (like `new` already did) instead of panicking on a zero
+  dimension or a buffer that does not match `width × height`; the
+  infallible signatures are not kept.
+
+### Added
+
+- `encode_all(&[Frame], &EncodeOptions)`, the mirror of `decode_all`:
+  delay-less frames become the primary plus a `brst` image burst
+  (`encode_still_burst`, `AvifMuxer::with_burst_member` /
+  `BurstMember` / `BurstAlpha`), timed frames an `avis` sequence with
+  per-sample durations at timescale 1000 (`encode_sequence` stays the
+  uniform-duration depth name). `decode_all(encode_all(frames)) ==
+  frames` is pinned at the lossless default.
+- `Cargo.toml` `exclude = ["/tests", "/fuzz"]` (crates.io 10 MiB cap).
+
+## [0.0.13](https://github.com/OxideAV/oxideav-avif/compare/v0.0.12...v0.0.13) - 2026-10-03
+
+### Other
+
+- harmonise with the wave-1 rulings — ColorRange, u32 frames, Io(std::io::Error), Option limits, validated new, parameter-driven frame bridge
+- README in the image-crate contract order; CHANGELOG for the contract surface, the AvifFile rename and the deprecations
+- contract_api harness (probe / info / decode_with / to_rgba8 / decode_all_with / lossless re-encode) + two findings fixed
+- the image-crate contract — probe / info standalone, decode* / encode* under registry, AvifImage is the picture, AvifFile the container
+
+### Added
+
+- **The workspace image-crate API** (`IMAGE_CRATE_API.md`) at the
+  crate root. Standalone (no `oxideav-core`): `probe(&[u8]) -> bool`
+  (`ftyp` with an `avif` / `avis` / `avio` brand), `info(&[u8]) ->
+  ImageInfo` (width, height, native `PixelFormat` from `av1C` + alpha,
+  `frames`, `has_alpha`, `color`, `has_icc` / `has_exif` / `has_xmp`,
+  `bit_depth`, `is_sequence`), the records `AvifImage` (the decoded
+  picture: `width`, `height`, `format`, `planes`, `color: ColorInfo`,
+  `metadata: Metadata`, `bit_depth`) with `new` / `from_rgb8` /
+  `from_rgba8` (identity-matrix 4:4:4, exact) / `as_bytes` / `into_raw`
+  / `to_rgb8` / `to_rgba8` (+ `try_` variants), `RgbImage` /
+  `RgbaImage`, `Frame { image, delay }`, `ColorInfo { range:
+  ColorRange, primaries, transfer, matrix }`, `ColorRange`,
+  `Metadata`, `DecodeOptions` (`max_width` / `max_height` /
+  `max_pixels` / `max_bytes` as `Option`s, `None` = unlimited;
+  `strict` / `tone_mapped` / `reference_white_nits` / `layer`),
+  `EncodeOptions`, the aliases `PixelFormat` (=
+  `AvifPixelFormat`), `Plane` (= `AvifPlane`) and `Error` (=
+  `AvifError`). With `registry`: `decode`, `decode_with`,
+  `decode_rgb8`, `decode_rgba8`, `decode_all` / `decode_all_with`
+  (`avis` samples with their display delay, `brst` burst entities, else
+  the primary), `decode_from`, `encode` (the image's own layout, alpha
+  as the auxiliary item, `Unsupported` for sub-sampled chroma at odd
+  extents), `encode_rgb8` / `encode_rgba8` (8-bit 4:2:0 at the MIAF
+  default colour by default, 4:4:4 at odd extents, alpha as the
+  auxiliary), `encode_to`; `From<AvifImage> for VideoFrame`,
+  `AvifImage::from_video_frame(&VideoFrame, &CodecParameters)` /
+  `TryFrom<(&VideoFrame, &CodecParameters)>` (dimensions and the
+  layout label from the parameters), `From<ColorSignal> for ColorInfo`.
+  `AvifImage::new` validates the plane geometry and returns `Result`.
+- `AvifError::LimitExceeded` (a `DecodeOptions` bound, mapped to the
+  framework's `ResourceExhausted`) and `AvifError::Io(std::io::Error)`
+  (`From<std::io::Error>`, `Error::source`). `AvifError` no longer
+  derives `Clone` / `PartialEq` / `Eq`: match on the variant or compare
+  `Display`.
+- `AvifDecoder::{options, set_options, with_options}` — the decoder
+  runs the contract functions with a full `DecodeOptions`.
+- `AvifMuxer::with_icc` / `AvifGridMuxer::with_icc` and
+  `StillProperties::icc` — an ICC `colr` written next to the `nclx`
+  one (MIAF §7.3.6.4 allows one of each), so decoded metadata
+  round-trips.
+- `EncodeOptions::{chroma, embed_exif, embed_xmp, embed_icc}` and
+  `with_quality(0..=100)` (`base_q_idx = ((100 − q) × 255 + 50) / 100`).
+- Fuzz harness `contract_api` (probe / info / decode_with / to_rgba8 /
+  decode_all_with under tight limits, lossless re-encode of small
+  pictures); regression fixture
+  `tests/fixtures/fuzz/av1c_depth_disagrees_with_stream.avif`.
+- README in the contract's section order: Standalone use (pixels need
+  `registry`), Framework use, Supported layouts, Options, Metadata and
+  colour, Limits, then the AVIF-specific material.
+
+### Changed
+
+- **`AvifImage` now names the decoded picture.** The parsed container
+  that `parse` returns — brands, `meta`, the primary `av01` item and
+  its properties — is renamed **`AvifFile<'_>`**; its fields and
+  `new` are unchanged. There is no alias: the old name is taken by the
+  pixel type the contract requires. `inspect` / `parse_header` /
+  `AvifInfo` / `AvifHeader` keep their names.
+- The framework `AvifDecoder` is a thin adapter over the contract
+  implementation (`decode_file` → `decode_primary`, `decode_avis_file`
+  → `decode_sequence_with`); the frames it emits are byte-identical
+  to 0.0.12. Its `ColorSignal` now comes from the item's `nclx`
+  wherever it sits in the association list (an ICC `colr` listed first
+  no longer hides it).
+- `StillChroma` lives in the `api` module (re-exported at the root and
+  from `still`); it implements `Default` (`Yuv420`).
+- A coded item whose `av1C` disagrees with its Sequence Header OBU on
+  bit depth, monochrome or sub-sampling is refused as `InvalidData`
+  (av1-avif §2.2.1 "shall match") instead of decoding under the wrong
+  label.
+
+### Deprecated
+
+- `StillEncodeOptions` → `EncodeOptions` (type alias kept for one
+  release; same fields `base_q_idx` / `alpha_q_idx` /
+  `premultiplied_alpha`, same `new` / `with_*`).
+
+### Removed
+
+- The container meaning of `AvifImage<'_>` (see Changed:
+  `parse -> AvifFile<'_>`).
+
+## [0.0.12](https://github.com/OxideAV/oxideav-avif/compare/v0.0.11...v0.0.12) - 2026-10-02
+
+### Other
+
+- hygiene narrowed to the deliberate public surface — 64 records/enums keep non_exhaustive + new, 61 module-crossing records go doc(hidden), SamplePlanes test-only
+- heif 0.0.7 minimum (new() constructors, _ arms on Colr / HeifError); #[non_exhaustive] + new / with_* across this crate's own public records and growing enums
+- fuzz harnesses on heif 0.0.5 (image_plane_count), low-overhead files documented as outside the AVIF profile
+- tmap gain maps decode (base by default, opt-in applied reconstruction) and encode, ToneMapImage wrapper parsed
+- avis sequences through the container's SequenceWriter (ccst, cover aliasing); raw Exif / XMP bodies, item names, flagged entity groups
+- zero-copy header, ColorSignal on every frame, identity-matrix items as planar RGB, encoder honours the stream signal
+- heif 0.0.5 minimum — Amd 1 / Amd 2 properties ride as Property::Container, per-channel pixi typed, no refusals
+- av1C record parse for the decoder is the container's Av1Config
+- avif README + lib docs: the layering — container by oxideav-heif, AV1 profile here
+- still-image muxer onto oxideav-heif HeifWriter; sequence cover still through the container
+- avis sequence walk onto oxideav-heif sequence::parse_movie
+- derived-image composition onto oxideav-heif compose — grid / iovl / alpha / clap / irot / imir on the container frame
+- parse path onto oxideav-heif — HeifFile + Meta::from_container replace the box walker and meta parser
+- avif CHANGELOG: state the published oxideav-av1 floor the layered path needs
+- derived-image graph fuzz target + decode memoisation/budget + canvas caps; two fuzz findings fixed
+- avif mux: keep the standalone (no-registry) build warning-free — W::u64 is sequence-only
+- avif sequence: avis image-sequence encode — moov/trak/stbl writer, all-intra or KEY+P groups, still primary aliasing sample 0
+- layered (progressive) image items — encode_still_layered with a1lx/lsel, decoder lsel/a1op layer selection
+- avif still/mux: grid alpha (hidden alpha grid of mono tiles) + grid pass-through props + depth-map aux + 64-px tile floor with tiling election
+- avif mux/still: overlay (iovl) + identity (iden) encode — AvifOverlayMuxer, encode_still_overlay, with_identity_derivation
+- avif decoder: iovl overlay + iden identity pixel composition, recursive derived-image output path
+- hide internal pub surface from rustdoc/semver (fleet rule 2026-09-01)
+
+### Changed
+
+- **API hygiene (a minor bump): a small, deliberate public surface.**
+  The records an external user deliberately constructs or reads
+  through the documented API are `#[non_exhaustive]` with
+  `Type::new(<every field, in declaration order>)` constructors (keep
+  reading / assigning their `pub` fields; `..Default::default()` struct
+  update is no longer available from outside the crate) and, on the
+  option records, `with_<field>` setters — **64 types**: the decode
+  results (`AvifImage` `AvifHeader` `AvifInfo` `Meta` `ItemInfo`
+  `AvisMeta` `AvisInfo` `ResolvedRegionItem` `ResolvedTextItem`
+  `CodedItemDependencies` `EntityGroup` `RegionItem`
+  `DerivedRegionItem` `DerivationNode` `DerivationGraph`
+  `SampleTransform`), the audit records surfaced on them
+  (`Mif1Compliance` `ToneMapCompliance` `GridDerivationAudit`
+  `IdenCompliance` `PredBrandCompliance` `AlphaBitDepthAudit`
+  `SequenceHeaderObuAudit` `AvifProfileCompliance`
+  `AvisSequenceCompliance` `AvisProfileCompliance`
+  `EditListCompliance`), the typed metadata a user reads or sets when
+  authoring (`Ispe` `Pixi` `Pasp` `Clap` `Irot` `Imir` `AuxC` `Lsel`
+  `A1op` `A1lx` `Mdcv` `Clli` `Cclv` `Amve` `CicpTriple`), the
+  encoder / decoder options and muxer specs (`StillImage`
+  `StillProperties` `StillEncodeOptions` `GainMapSpec`
+  `SequenceEncodeOptions` `OverlayCanvas` `OverlayLayerImage`
+  `OverlayInput` `ToneMapItem` `EntityGroupSpec` `IdentityDerivation`
+  `GridTile` `OverlayLayer`), and the enums that grow with the
+  standard (`AvifError` `Property` `Colr` `AuxKind` `DerivationKind`
+  `RegionGeometry` `BracketingKind` `Token` `AvifProfile` — match them
+  with a `_` arm). Setters on `StillProperties` `StillEncodeOptions`
+  `SequenceEncodeOptions` `GainMapSpec` `IdentityDerivation`
+  `EntityGroupSpec` `ToneMapItem` `GridTile` `OverlayLayer`
+  `OverlayCanvas` `OverlayLayerImage`.
+  Everything that exists because the parser / composer / writer
+  needed a module-crossing record is `#[doc(hidden)]` (outside the
+  semver contract, no `#[non_exhaustive]`) — **61 types**: the
+  `iloc` / `ipma` / `iref` table records (`IlocExtent` `ItemLocation`
+  `ItemPropertyAssociation` `PropertyAssociation` `IrefEntry`), the
+  brand classification helper (`BrandClass`), the descriptors and
+  geometry records (`ImageGrid` `ImageOverlay` `OverlayEntry`
+  `DimTransform` `OverlayPlacement` `OverlayResolution`
+  `IdenResolution` `ToneMapResolution` `GridTilePlacement`
+  `GridResolution`), the standalone gain-map descriptor copy
+  (`GainMapMetadata` `GainMapChannel` `GainMapRational` — authoring
+  takes `oxideav_heif::gainmap::GainMapMetadata`), the sample-table
+  records (`Sample` `EditListEntry` `ProducerReferenceTime`
+  `SubsegmentRange` `SubsegmentIndex` `SampleToGroupRun`
+  `SampleToGroup` `SampleToGroupKind` `SampleGroupDescription`
+  `BracketingEntry` `VisualEquivalenceEntry`) and the HEIF-extension
+  property family carried by `Property` (`Rloc` `Iscl` `Rref` `Crtt`
+  `Mdft` `Udes` `Altt` `Aebr` `Wbbr` `Fobr` `Afbr` `Dobr` `Pano`
+  `PanoGrid` `Subs` `SubsEntry` `Tols` `Prdi` `Sstr` `Txlo` `Elng`
+  `Fnch` `MaskC` `Cmex` `Cmin` `Wipe` `Zoom` `Fade` `Splt` `Stpe`
+  `Ssld`). The overlay compositor's `SamplePlanes` scaffolding
+  (`unpack_planes` / `pack_planes`) is test-only. Kept plain on
+  purpose: `AvifFrame` / `AvifPlane` / `AvifPixelFormat` (the sample
+  model, closed by AV1), `StillChroma`, the builders with private
+  fields (`AvifMuxer` family, `AvifDecoder`, `AvifEncoder`).
+- **`oxideav-heif = "0.0.7"` minimum** (was 0.0.5 earlier in this
+  cycle): the container's records are `#[non_exhaustive]` with `new`
+  constructors, so every property / descriptor / `RawProperty` /
+  `OverlayInput` / gain-map record this crate builds goes through
+  `::new(..)`, and the matches on the container's `Colr` and
+  `HeifError` carry a `_` arm (a future `colr` type reads as
+  `Colr::Unknown`, a future error class as `InvalidData`).
+- **`oxideav-heif = "0.0.5"` minimum.** The container's HEIF Amd 1:2025
+  / Amd 2:2026 typed properties no longer make the property conversion
+  refuse a file: the Amd 2 per-channel `pixi` (`px_flags & 1`) lands on
+  `Property::Pixi` with its channel descriptors in the new
+  `Pixi::channels` field (empty for the plain form), and every other
+  form the container types beyond this crate's model — `reve`, `ndwt`,
+  `cexg`, `dadj`, `stag`, `tilC` today, whatever the container learns
+  next — rides as the new `Property::Container(oxideav_heif::props::Property)`
+  (readable, index-stable; an essential one is reported by
+  `Meta::unsupported_essential_properties` instead of refused; a body
+  the container rejects stays a raw `Property::Other`). The container
+  conversion's "typed unexpectedly" error is gone. New
+  `Meta::properties_for(item_id)` lists an item's properties in `ipma`
+  order.
+- **Zero-copy header.** `parse_header` / `parse` / `parse_avis` and
+  the decoder build the container view with `HeifFile::parse_borrowed`:
+  `AvifHeader::heif` is now `HeifFileRef<'a>` (`HeifFile<&[u8]>`, every
+  reader generic over the storage) and the input is never copied by
+  the header walk.
+- **Colour signalling through oxideav-core 0.1.37.** Every frame the
+  `"avif"` decoder emits carries a `ColorSignal` side channel — the
+  primary's output `colr` (`nclx` code points as signalled, else the
+  MIAF §7.3.6.4 default: BT.709 / sRGB / BT.601, **full range**; MIAF
+  §7.3.6.4 NOTE 1 makes the property, not the bitstream, authoritative)
+  for a still, the `av01` sample entry's `colr` for a sequence
+  (`AvisMeta::colr`). A full-range 10-bit still is no longer taken as
+  limited downstream. `AvifDecoder::color_signal()` and
+  `AvifDecoder::output_format()` read back the last decode's signal and
+  framework label; the new `signal` module (`color_signal_for`,
+  `labelled_pixel_format`, `miaf_default_signal`) is the rule. Because
+  the frame now ends in a side-channel plane, plane counting goes
+  through `VideoFrame::image_plane_count()` / `image_planes()`; the
+  `From<VideoFrame> for AvifFrame` conversion and the encoder's input
+  checks drop / skip side-channel records instead of counting them.
+- **Identity-matrix items are planar RGB on the framework surface.** An
+  item whose effective `colr` has `matrix_coefficients = 0` (H.273
+  §8.3: Y = G, Cb = B, Cr = R — e.g. a lossless `heif-enc -A -L -p
+  chroma=444` or `avifenc --lossless` file) decoded in 4:4:4 is
+  labelled `Gbrp8` / `Gbrp10Le` / `Gbrp12Le` (`Gbrap*` with alpha, plane
+  order G B R [A]) instead of a Y′CbCr layout; a full-range 8-bit
+  Y′CbCr still without alpha is labelled `YuvJ420P` / `YuvJ422P` /
+  `YuvJ444P`. The crate-local `AvifPixelFormat` stays the storage
+  layout. The framework encoder accepts the same planar RGB family as
+  input (`Gbrp8` / `Gbrap8` / `Gbrp10Le` / `Gbrap10Le` / `Gbrp12Le` /
+  `Gbrap12Le`, identity 4:4:4, lossless stays exact) and honours
+  `CodecParameters::color_signal`: a specified range writes
+  `full_range_flag` (and the AV1 `color_range` bit), specified
+  primaries / transfer / matrix are written as given (the RGB layouts
+  keep the identity matrix); `Encoder::output_params().color_signal`
+  reports the signal the file was written with. With nothing signalled
+  the encoder's historical defaults are unchanged.
+- **Image-sequence writer by `oxideav-heif`.** `encode_sequence` builds
+  the `avis` file with the container's `SequenceWriter`: this crate's
+  brands through `with_brands`, the cover still as the writer's
+  `still` with `cover_sample = Some(0)` (the primary item's `iloc`
+  aliases sample 0 in the track `mdat` — one copy of the bytes), the
+  `av01` sample entry's `av1C` / `colr` / `clap` as `entry_properties`,
+  and the HEIF §7.2.3.1 **mandatory** `ccst` (all-intra: `(1, 1, 0)`;
+  KEY + P groups: `(0, 1, 15)`) that the local `moov` writer used to
+  omit. The hand-written `mvhd` / `tkhd` / `mdhd` / `hdlr` / `vmhd` /
+  `dinf` / `stsd` / `stts` / `stss` / `stsc` / `stsz` / `stco` writer,
+  its two-pass chunk-offset settlement and the `CoverStill` /
+  `sequence_cover_still` cover helper are gone (−463 lines). The track
+  now precedes the cover still's `meta` in box order, so a demuxer that
+  numbers streams by box order lists the `pict` track first.
+- **Raw metadata through the container.** `AvifMuxer` /
+  `AvifGridMuxer::with_exif` write the Exif item body as is
+  (`HeifWriter::add_exif_raw`) — any `exif_tiff_header_offset`, not only
+  zero (an offset past the payload is refused); `with_xmp` takes the
+  packet in any encoding (`add_xmp_bytes`), the UTF-8 requirement is
+  gone. New `AvifMuxer::with_item_name` (`infe` `item_name` of the
+  primary, `set_item_name`) and `with_entity_group(EntityGroupSpec)`
+  (`grpl` groups with their 24-bit `EntityToGroupBox` flags,
+  `add_entity_group_with_flags`).
+- **Gain maps (`tmap`) decode and encode** (av1-avif §4.2.2 over HEIF
+  Amd 1:2025 §6.6.2.4 + ISO 21496-1 — the published clause, staged
+  2026-09-28, closes the "geometry-only" hold). Decode: by default the
+  base image (a `tmap` primary yields its base input's output image,
+  what a reader without tone-map support shows); with
+  `AvifDecoder::set_tone_mapped(true)` / `with_tone_mapped` / the
+  registry option `gain_map=apply` the decoder picks the `tmap`
+  alternative of the primary (the primary itself, or the `tmap` whose
+  base input it is — preferring the one sharing an `altr` group, MIAF
+  Amd 1 §7.3.11.5) and reconstructs it through the container's
+  normative `gainmap::reconstruct_tone_map`: the gain map fully
+  applied (weight ±1 at the alternate headroom), re-encoded in the
+  `tmap` item's own `colr` at its `pixi` depth (else the base's), the
+  base's alpha carried over; the frame's colour signal is the `tmap`
+  `colr`. A `tmap` that is the input of another derived item is
+  always applied. `reference_white` (cd/m², default 203) anchors a
+  PQ alternate. Black box: the reconstruction of an
+  `avifgainmaputil combine` file matches `avifgainmaputil tonemap` at
+  the alternate headroom within 1 code (8-bit), and the tool's
+  tone-map of our authored file matches our applied decode within 1
+  code (10-bit). `GainMapMetadata::parse_tone_map_image` /
+  `inspect::gain_map_metadata` now read the `ToneMapImage` wrapper
+  (version byte 0, else `Unsupported`) before the C.2 descriptor —
+  `gain_map_metadata` used to parse the body as a bare C.2 descriptor,
+  mis-aligned by one byte against the published clause. Encode:
+  `StillProperties::gain_map: Option<Box<GainMapSpec>>` (the map
+  picture, the 21496-1 metadata, the alternate `colr` / `clli` / bit
+  depth, the map's `q`) codes the map as a hidden `av01` with a
+  primaries / transfer = 2 `nclx` and lets the container's
+  `HeifWriter::add_tone_map` write the `tmap` (essential alternate
+  `colr`, base-sized `ispe`, `pixi` hint, `clli`, body in `idat`, the
+  `tmap` brand and the `altr` [tmap, base] group; the base stays the
+  primary); `AvifMuxer::with_tone_map(ToneMapItem)` is the muxer form.
+  `inspect` accepts a `tmap` primary.
+- **Low-overhead files (`mini`, HEIF Amd 2:2026 Annex O / `mif3`)**:
+  not adopted — the AVIF specification in `docs/image/avif/`
+  (av1-avif, 2025-10-16) defines no low-overhead profile and lists no
+  `mif3` / `mini` among its brands or boxes (§6, §9.1); this crate's
+  brand rule keeps refusing `mif3` files. The container crate reads
+  and writes them (`oxideav_heif::mini`, an AV1-coded `mini` expands
+  to an `avif`-equivalent `meta`), so a `.hmg` / `image/hif2` file is
+  the `"heif"` demuxer's to open until AVIF defines the profile.
+- **Fuzz**: harnesses rebuilt against the published `oxideav-heif`
+  0.0.5 / core 0.1.37 / av1 0.1.19; plane counting goes through
+  `image_plane_count()` (the colour-signal side channel made the
+  self-roundtrip harness miscount — found and fixed in-session).
+
+- **Container layer by `oxideav-heif`.** The ISOBMFF box reader, the
+  `meta` item model (`hdlr` / `pitm` / `iinf` + `infe` / `iloc` /
+  `iref` / `iprp` + `ipco` + `ipma` / `idat`) and item payload
+  resolution across every `iloc` construction method now come from the
+  published `oxideav-heif` crate (`default-features = false`, so the
+  standalone build stays framework-free). `Meta::parse` builds this
+  crate's item model from the container's (`Meta::from_container`);
+  the container-typed properties (`ispe` `pixi` `colr` `pasp` `clap`
+  `irot` `imir` `iscl` `auxC` `clli` `amve` `rloc` `lsel` `a1op` `a1lx`
+  `rref` `crtt` `mdft` `udes` `altt`) are converted from
+  `oxideav_heif::props`, the HEIF-extension properties this crate types
+  beyond that set (`aebr` … `cmin`, the transition effects, `prdi`,
+  `sstr`, `txlo`, `elng`, `fnch`, `mskC`) are parsed from the raw
+  property bytes, `av1C` is carried raw for the AV1 layer, and `mdcv` /
+  `cclv` keep this crate's field reading. `parse_header` /
+  `AvifHeader` carry the container view (`AvifHeader::heif`,
+  `AvifHeader::item_data`) which `parse`, the decoder, `inspect` and
+  `item_payload_bytes` use for item bytes (file offset, `idat` and
+  item-offset construction methods alike); `parse` still borrows the
+  primary payload zero-copy when it is one contiguous span.
+- **Composition by `oxideav-heif`.** Grid stitching, `iovl` overlay
+  painting, alpha attachment and the `clap` / `irot` / `imir`
+  transforms are the container crate's `compose` layer; the decoder
+  walks the derivation graph on the container's planar frame
+  (`HeifFrame`) and re-lays the primary's output out as this crate's
+  `AvifFrame` / `AvifPixelFormat` (packed `Ya8` / `Ya16Le` for
+  monochrome + alpha) once at the end. `ImageGrid::parse` /
+  `ImageOverlay::parse` are the container's descriptor parsers with
+  this crate's `version = 0` rule. The standalone `composite_grid` /
+  `composite_alpha` / `composite_overlay` / `apply_clap` / `apply_irot`
+  / `apply_imir` keep their signatures over the same layer. What this
+  crate keeps as AVIF-side rules, on top: the av1-avif §4.1 same-depth
+  `shall` for alpha (a mismatch is refused, not rescaled), the §6.9.1
+  nearest-neighbour alpha resize, the `ispe` trim of a padded coded
+  frame and the grid's right / bottom trim with AV1's ceiling chroma
+  extents (an odd 4:2:0 output stays 4:2:0), a monochrome overlay stays
+  monochrome, a degenerate / non-fitting `clap` passes through, and a
+  quarter turn of a 4:2:2 picture is refused. Behaviour that changed
+  with the container semantics: an odd clean aperture on subsampled
+  chroma promotes the picture to 4:4:4 (MIAF §7.3.6.7); an overlay
+  input at an odd offset on a subsampled axis, or carrying alpha,
+  promotes the canvas to 4:4:4; the `iovl` fill is converted with the
+  output's H.273 matrix at every `colr` (it used to be refused unless
+  identity / neutral) and 16-bit fill values scale proportionally to
+  the coded depth (`0xC000` → 191 at 8 bits, not the shifted 192); the
+  three standalone transform entry points refuse (with `Unsupported`)
+  a call whose result would change layout, as their `(frame, width,
+  height)` result cannot carry it. A grid tile with a chroma plane
+  shorter than its extents is refused instead of zero-filled.
+- **Image sequences by `oxideav-heif`.** `parse_avis` walks `moov` /
+  `trak` / `stbl` through the container's `sequence::parse_movie`
+  (sample table with bounded expansion and every sample range checked
+  against the file, `stsd` entries with `av1C`, `tkhd` extents, `mdhd`
+  timescale, `hdlr`, `elst`); the sample-group boxes (`sbgp` / `csgp` /
+  `sgpd`) of the first track's `stbl` and the top-level `prft` / `ssix`
+  boxes stay this crate's. `AvisMeta` is unchanged. The container
+  applies ISO/IEC 14496-12's mandatory-box rules — a `moov` without
+  `mvhd`, a `trak` without `tkhd`, an `mdia` without `mdhd` / `hdlr` or
+  an `stbl` without `stts` is refused (this crate used to read such
+  files with defaults) — and bounds a hostile `stsc` expansion by what
+  `stsz` declares instead of refusing it. Removed: the raw-payload
+  helper `sample_table(stbl)` (use `parse_avis(file).samples`; the
+  sample offsets are absolute file offsets, so a bare `stbl` has no
+  file to check them against).
+- **Still-image writer by `oxideav-heif`.** `AvifMuxer` /
+  `AvifGridMuxer` / `AvifOverlayMuxer` / `encode_still_av1` (and so
+  `encode_still*` and the framework `Encoder`) assemble their items
+  with the container's `HeifWriter`: this crate decides the AVIF
+  layout — brands (`avif` / `mif1` / `miaf` + `MA1B` / `MA1A`), item
+  order (primary first so it is item 1, a `grid` / `iovl` before its
+  inputs, the alpha auxiliary right after its master), every item's
+  property set and essential flags, the alpha / depth `auxC` URNs,
+  the grid / overlay descriptors — and the container serialises the
+  `meta` tree. What changed on the wire: derived item bodies (`grid` /
+  `iovl` descriptors) ride `idat` (construction method 1) instead of
+  `mdat`, `iloc` is v1 with 64-bit offsets, `ipco` de-duplicates
+  descriptive properties across items while each coded item keeps its
+  own `av1C`, the `prem` reference is written from the master to its
+  alpha auxiliary (HEIF 3rd ed. §6.9.1; the reader now accepts either
+  direction, in `Meta::is_alpha_premultiplied_for` and
+  `AvifInfo::premultiplied_alpha`), `mdat` follows the MIAF §7.2.1
+  order, and the alpha / depth items no longer carry an `item_name`.
+  An `Exif` item body must start with a zero
+  `exif_tiff_header_offset` (the container writer prepends its own)
+  and an XMP packet must be UTF-8; anything else is refused with
+  `Unsupported`. Every emitted shape still opens in the third-party
+  readers the tests use (an `iovl` primary was never accepted by the
+  reference AVIF decoder binary, before or after).
+- **Image-sequence writer.** `encode_sequence` writes the cover still
+  (sample 0 as the primary `av01` item, the sequence's brands `avis` /
+  `avif` / `mif1` / `msf1` / `miaf` / `av01` [+ `avio`] + profile)
+  through the container writer and appends its own `moov` and the
+  remaining samples in a second `mdat`, so the primary aliases sample
+  0; the `moov` / `trak` / `stbl` serialisation stays here because the
+  container's `SequenceWriter` has no brand override and no
+  cover-still aliasing (cross-crate item).
+- `av1C` record parsing for the decoder is the container's
+  `oxideav_heif::Av1Config` (`av1_config::Av1CodecConfig` is now that
+  type; the AV1 §A.4 / §5.5.2 constraint checks stay here). The
+  audit-side field readers (`seq_profile` / `seq_level_idx_0` / bit
+  depth out of a possibly malformed record) keep their lenient local
+  byte reads.
+- `box_parser` is a thin surface over `oxideav_heif::boxes`:
+  `BoxHeader` is the container crate's type (`total_len` is now a
+  method and the header also carries `start` / `user_type`); an
+  `ipma` index-0 placeholder is dropped by the container instead of
+  refusing the file. `AvifError: From<oxideav_heif::HeifError>`.
+
+### Added
+
+- **`iovl` overlay + `iden` identity pixel composition** (HEIF §6.6.2.2 /
+  §6.6.2.1 / §6.3). New framework-free `overlay` module:
+  `composite_overlay` paints every input onto the
+  `output_width × output_height` canvas in `dimg` order (bottom-most
+  first) at its signed offset, clipped against the canvas (§6.6.2.2.3),
+  with the §6.9.1 alpha-plane rendering (`vu = m·α + vi·(1−α)` straight,
+  `vu = m + vi·(1−α)` pre-multiplied via `prem`) at 8/10/12 bits; a
+  translucent or transparent `canvas_fill_value` yields the matching
+  `Yuva*` / `Ya*` layout carrying the canvas opacity. The fill colour is
+  converted exactly for the H.273 identity matrix (Y=G, Cb=B, Cr=R) and
+  neutral fills on monochrome masters; other pairings are only accepted
+  when the fill never shows (fully covered by opaque inputs, or `A = 0`).
+  Canvases are bounded by `MAX_OVERLAY_CANVAS_PIXELS` before allocation.
+- **Recursive derived-image decode**: `AvifDecoder::decode_file` now
+  resolves the primary's *output image* per §6.3 for any item type —
+  `av01`, `grid`, `iovl`, `iden` — recursively over `dimg` inputs
+  (cycle- and depth-guarded by `MAX_DERIVATION_DEPTH`), compositing each
+  overlay input's own alpha auxiliary and applying every item's
+  `clap`/`irot`/`imir` in `ipma` order. The alpha auxiliary of a **grid**
+  primary may itself be a coded `av01` item or a `grid` of monochrome
+  tiles; colour-coded alpha uses its luma plane only and an alpha plane
+  whose extents differ from the master's is resized (§6.9.1,
+  nearest-neighbour).
+- `AvifPixelFormat::from_layout` / `without_alpha` layout helpers.
+- **Overlay + identity encode.** `AvifOverlayMuxer` / `OverlayLayer` emit
+  an `iovl` primary (HEIF §6.6.2.2 descriptor — 16- or 32-bit field
+  widths elected from the canvas extents / offsets, RGBA fill, hidden
+  `av01` layers with optional `clap` + alpha auxiliary + `prem`, `irot` /
+  `imir` on the derived item); `still::encode_still_overlay` /
+  `OverlayCanvas` / `OverlayLayerImage` drive it from pixels (each layer
+  coded like an `encode_still` primary; one shared coded layout).
+  `AvifMuxer::with_identity_derivation` / `IdentityDerivation` and
+  `StillProperties::identity_derivation` make the primary an `iden` item
+  (§6.6.2.1: no extents — absent from `iloc` — single `dimg` input, the
+  coded item left exposed) carrying `clap` / `irot` / `imir`.
+- **Grid + alpha encode** (`encode_still_grid` / `AvifGridMuxer::alpha_tile`):
+  the alpha of a grid primary is a hidden alpha `grid` of same-geometry
+  monochrome tiles (`auxC` alpha URN, `auxl` → the colour grid, `prem`
+  optional) — HEIF §6.4.1 roles are independent of the coded-vs-derived
+  representation. The grid path also carries the pass-through properties
+  (`irot` / `imir` / `pasp` / `mdcv` / `clli` / `amve` / Exif / XMP) on the
+  grid item (av1-avif §7: transforms only on the grid item).
+- **Grid tile election**: `GRID_MIN_TILE_DIM` (64) floor on coded tile
+  extents — external AVIF readers reject smaller tiles (their diagnostics
+  cite the MIAF grid-tile constraint, ISO/IEC 23000-22 §7.3.11.4.2) —
+  `elect_grid_tiling` (fewest tiles per axis within a bound, never
+  below the floor, never a fully-trimmed tile) and `encode_still_auto`
+  (single item when it fits `STILL_MAX_CODED_DIM`, elected grid
+  otherwise). Grid encodes are now accepted by the external AVIF decoder
+  binary, planes exact (previously every grid it saw was refused).
+- **Depth-map auxiliary** on the pixel encoder: `StillImage::with_depth_map`
+  → hidden monochrome `av01` at the master's depth with the HEIF §6.9.2
+  depth URN (`AvifMuxer::with_depth`).
+- `audit_alpha_bit_depth` resolves `av1C` through the derivation chain,
+  so an alpha grid / grid master audits by its coded tiles.
+- **Layered (progressive) image items** both directions (av1-avif §2.3).
+  `encode_still_layered` codes 2..=4 renditions as independently
+  decodable AV1 spatial layers in one temporal unit (one Sequence
+  Header, `spatial_id` extension headers) and writes `a1lx` (per-layer
+  byte sizes from an OBU walk, §2.3.2.3), `lsel` (`0xFFFF` progressive
+  or a pinned layer, HEIF §6.5.11) with `ispe` / `clap` of the selected
+  layer (§2.2.2); `AvifMuxer::{with_layered_index, with_layer_selector,
+  with_operating_point}` expose the `a1lx` / `lsel` / `a1op` properties.
+  The decoder drains every shown frame of an item, renders the `lsel`
+  layer (or the top one), and honours `a1op` through the AV1 crate's
+  operating-point decode (upper layers dropped per §5.3.1). Top-layer
+  decode is exact and black-box accepted by the external AVIF decoder.
+- **Image-sequence encode** (`sequence::encode_sequence` /
+  `SequenceEncodeOptions`, av1-avif §3 / §6.3 / §8, AV1-ISOBMFF §2,
+  ISO/IEC 14496-12 §8): `ftyp` (`avis` major; `avis`/`avif`/`mif1`/
+  `msf1`/`miaf`/`av01` + profile brand + `avio` when all-intra), a
+  still primary `av01` item aliasing sample 0 in `mdat`, and a `moov`
+  with `mvhd` / `tkhd` / `mdhd` / `hdlr('pict')` / `vmhd` / `dinf` /
+  `stbl` (`stsd` `av01` VisualSampleEntry + `av1C` + `colr` + `clap`,
+  `stts`, `stss` only when not every sample is sync, `stsc`, `stsz`,
+  `stco`/`co64`). Frames code all-intra or as KEY + P groups
+  (`gop_length` ≤ 64) through the AV1 crate's inter encoder; lossless
+  groups decode sample-exact at 8 and 10 bits through this crate's
+  sequence path, the external AVIF decoder (`--index all`) and ffmpeg
+  (track stream) recover every frame exactly.
+- **Derived-image graph fuzz target** (`fuzz/fuzz_targets/derived_graph_decode`):
+  structure-aware `meta` synthesis — `av01` / `grid` / `iovl` / `iden` /
+  alpha-aux items with fuzz-chosen `dimg` / `auxl` / `prem` edges
+  (cycles, self references, count mismatches, off-canvas / overlapping
+  placements, oversize descriptors, `lsel` / `a1op`, `clap` / `irot` /
+  `imir` chains) around one pre-encoded AV1 tile — decoded end to end
+  plus `inspect` + the derivation-graph walk. Canvas bounds:
+  `MAX_GRID_CANVAS_PIXELS` (2^28) on grid descriptors and
+  `MAX_OVERLAY_CANVAS_PIXELS` (2^26) on overlays, both checked before any
+  tile is decoded. (The fuzz sub-crate resolves the published
+  `oxideav-av1` ≥ 0.1.18, which carries the spatial-layer /
+  operating-point API the crate now uses.)
+- Two findings from the new fuzz target, fixed with regression tests:
+  the coded-leaf search behind `inspect` on a derived primary expanded
+  every `dimg` entry recursively without a visited set (a self-referencing
+  overlay listing itself three times cost `3^17` visits — a 20 s hang on
+  an 8-byte file), and `crop_rect` sized chroma planes with a floor
+  while every consumer uses the ceiling, so an odd-width 4:2:0 crop
+  followed by `imir` read past the plane (panic). Derived-image decode
+  is now memoised per item with a `MAX_ITEM_DECODES` budget, so shared
+  or hostile fan-out never repeats work.
+- Derived-image test suite (`tests/derived_images.rs`): overlay
+  8-bit 4:2:0 / 10-bit 4:2:2 (clipped negative offset) / identity-matrix
+  RGBA alpha-over with transparent fill / 12-bit monochrome odd offset +
+  `irot`, identity `irot` and `clap`+`imir` with inherited alpha — all
+  sample-exact through the decoder, plus black-box legs where an
+  external HEIF decoder binary is installed (8-bit renders of the derived
+  files are byte-identical to flat encodes of the composed pixels;
+  identity-matrix RGB rasters match directly).
+
+## [0.0.11](https://github.com/OxideAV/oxideav-avif/compare/v0.0.10...v0.0.11) - 2026-08-15
+
+### Other
+
+- avif tests: reverse black-box leg — external encodes decode exact at depth
+- avif decoder: route metadata-less image-sequence files to the AVIS path
+- avif docs: HBD decode composition is live — status + coverage refresh
+- avif fuzz: HBD-matrix self-roundtrip harness
+- avif tmap: gain-map application from coded integer planes at any depth
+- avif decoder: 10/12-bit primaries, grids, alpha and AVIS decode end to end
+- avif composition: grid / alpha / transforms at 8, 10 and 12 bits
+- avif image: high-bit-depth + packed-YA pixel-format surface
+- gate identity-matrix plane comparisons on the stream's colr declaration
+- drop accidentally-committed local corpus; ignore fuzz scratch dirs
+- avif still: deref Copy property types instead of clone (clippy clone_on_copy)
+- avif still: cite the av1-avif §4.1 aux-stream shalls precisely (color_range=1, mono_chrome=1)
+- avif still: StillProperties pass-through — Exif/XMP, HDR (mdcv/clli/amve), irot/imir, pasp
+- README truth-up (decode + pixel-encode live) + 10-bit alpha same-depth leg
+- avif encoder: registry Encoder goes live — one AVIF file per frame + self-roundtrip fuzz harness
+- avif still: pixel->AVIF encode — full (depth,format) matrix + RGB(A) identity + alpha + clap padding + grid
+- avif mux: tri-state profile brand — no_profile_brand() for Professional-profile payloads
+- restore real AV1 pixel decode via oxideav-av1's registry decoder
+- doc(hidden) internal plumbing for semver tooling
+- avif mux: depth-map auxiliary + baseline profile-compliance validation
+- avif mux: HDR (mdcv/clli/amve) + Exif/XMP items + advanced profile + wide grid
+- implement the AVIF container encoder/muxer + wire the Encoder trait
+- add CI / crates.io / docs.rs / MIT-license badges
+- EntityGroup::cardinality_ok — ster/iaug exactly-two shall (HEIF §6.8.5/§6.8.4)
+- README + CHANGELOG — entity-group family + bracketing/eqiv sample-group entries
+- inspect::entity_groups decode-free typed-group enumeration
+- slid/albc/favc entity groups (HEIF §6.8.9 + §6.8.7)
+- eqiv VisualEquivalenceEntry sample-group entry (HEIF §6.8.1.2.2)
+- bracketing sample-group entries (HEIF §6.8.6.2-6.8.6.6)
+- tsyn/iaug + bracketed-set entity groups (HEIF §6.8.3-6.8.6)
+- derived region items — 'drgn' iden derivation (HEIF §11.3.3.2.1)
+- 'pred' brand file-constraint audit (HEIF §10.2.4.2)
+- coded-item dependency roles — pred/base/exbl/tbas (§6.4.7-6.4.9)
+- text/font item enumeration + prgr/brst/msrc entity groups (§6.10/§6.8)
+- HEIF region items + mskC mask-config property (§11.2/§11.3)
+- sstr/txlo/elng/fnch HEIF item properties (§6.5.38 + §6.10)
+- README — document unified derivation graph + cm=2 descriptor row
+- derivation-graph decode-buffer accessors + totality sweep
+- resolve cm=2 (item-offset) derived-image descriptors (§8.11.3.3)
+- unified derivation-graph resolution (HEIF §6.6)
+- grid tile-derivation geometry resolution (ISO/IEC 23008-12 §6.6.2.3)
+- sato Sample-Transform derivation dimension resolution (av1-avif §4.2.3.1)
+- tmap tone-map derivation geometry resolution (av1-avif §4.2.2)
+- README — document §6 gain-map application surface on the tmap row
+- buffer-level gain-map application — apply_plane_rgb (ISO 21496-1 §6.3)
+- gain-map application (ISO 21496-1 §6) — unnormalize + weight + apply
+- end-to-end cm=2 fixture tests + export item_bytes_owned_full
+- resolve construction_method==2 (item_offset) iloc items
+- capture iloc extent_index for construction_method==2
+- reuse Meta::idat in inspect; drop redundant extract_idat re-walk
+- idat-aware grid / alpha / metadata item resolution
+- idat-backed item byte resolution (ISO/IEC 14496-12 §8.11.3 cm=1)
+- derived-image geometry resolution for iovl/iden (HEIF §6.3/§6.6.2)
+- AVIS ssix SubsegmentIndexBox parser (ISO/IEC 14496-12 §8.16.4)
+- add amve AmbientViewingEnvironmentBox item property (AVIF §6.5.36)
+- prft ProducerReferenceTimeBox parser (ISO/IEC 14496-12 §8.16.5)
+- ISOBMFF sample-grouping family (sbgp / csgp / sgpd)
+
+### Added
+
+- **High-bit-depth decode COMPOSITION layer** — the 10/12-bit gap the
+  pixel-decode restoration left open is closed end to end. The whole
+  container-side composition pipeline (grid stitch — HEIF §6.6.2.3,
+  alpha composite — av1-avif §4.1, `clap` / `irot` / `imir`
+  post-transforms — HEIF §6.5.10, the `ispe` padded-frame clamp) now
+  operates at 8, 10 and 12 bits: geometry stays in pixels and the byte
+  maths scales by the format's storage width (one byte per sample at
+  8-bit, a little-endian 16-bit word per sample — low bits significant
+  — at 10/12). New crate-local `AvifPixelFormat` output surfaces (with
+  `oxideav-core` `PixelFormat` conversions both ways):
+  `Yuv420P10Le`/`Yuv422P10Le`/`Yuv444P10Le` + the `*12Le` trio,
+  `Gray10Le`/`Gray12Le`, the alpha-composited
+  `Yuva420P10Le`…`Yuva444P12Le` family, and packed `Ya16Le` for a
+  10/12-bit monochrome master + same-depth alpha (raw coded values
+  interleaved in the low bits of 16-bit LE words; the registry decoder
+  reports the effective depth via the core per-plane significant-bits
+  side channel). Format helpers `bytes_per_sample` / `bit_depth` /
+  `chroma_subsampling` / `is_packed_ya` / `has_alpha` / `with_alpha`
+  back the plumbing. `composite_alpha` now **enforces** the av1-avif
+  §4.1 same-bit-depth `shall` (master depth ↔ alpha depth; mismatch is
+  `InvalidData`), and the packed-YA layouts ride through
+  `irot`/`imir`/`clap` (previously even 8-bit `Ya8` was rejected by
+  the transform geometry). The AV1-frame format inference is now
+  driven by the item's `av1C` record (`high_bitdepth`/`twelve_bit` →
+  storage width + depth) instead of assuming one byte per sample. The
+  two `high_bitdepth` `Unsupported` guards (still primary + AVIS
+  sequence) are deleted. Validation: the encode→decode
+  (8/10/12 × 4:2:0/4:2:2/4:4:4/mono) matrix round-trips sample-exact
+  through the crate's own decoder where lossless (plus AV1-registry
+  raw-payload cross-checks); 10/12-bit alpha (incl. premultiplied
+  signalling) composites exactly; 10-bit grid with right/bottom trim
+  stitches exactly; HBD odd-extent `clap`-back and `irot` rotation are
+  word-exact; the black-box acceptance leg now also cross-decodes
+  10/12-bit encodes (420p10 / 422p10 / 444p12) through the external
+  AVIF decoder binary's depth-retaining Y4M output. New fuzz harness
+  `oxideav_hbd_matrix_roundtrip` drives fuzz-shaped
+  (depth × chroma × alpha) planes through lossless encode → own decode
+  → sample-exact assert (88k executions clean on the bring-up run).
+- **Gain-map application at coded depth** (ISO 21496-1 §6 surface):
+  `GainMapMetadata::apply_plane_rgb_coded` applies the gain map from a
+  plane still in its coded integer form at 8/10/12/16 bits — the shape
+  an AV1 decode of the `'tmap'` gain-map input emits — via the new
+  `normalize_full_range_plane` helper (full-range code-value scaling
+  `x / (2^depth − 1)`, the AV1 §5.5.2 `color_range = 1` convention,
+  with out-of-range samples rejected), then the existing §6.3
+  application unchanged.
+
+- **Real AV1 pixel decode restored** — the crate depends on
+  `oxideav-av1` again (behind the default-on `registry` feature) and
+  hands every AV1 Image Item Data payload / AVIS sample to its
+  conformance-grade spec-driver registry decoder. The post-2026-05-20
+  `av1_stub` window is closed: the stub `Av1Decoder` (which surfaced
+  `Error::Unsupported` for every packet) is deleted, and the module is
+  renamed `av1_config` — it keeps only the `av1C`
+  (AV1CodecConfigurationRecord, av1-isobmff §2.3) parser plus a new
+  §5.5.2 `bit_depth()` derivation. Every committed fixture now decodes
+  END TO END: the 1280×720 monochrome still, the 3840×2160 4:2:0 +
+  alpha composite (4-plane output), the irot-carrying 1024×722 still,
+  the full multi-sample AVIS sequence (inter frames included), and all
+  five reference-encoder-produced flat fixtures (lossless flat gray
+  decodes to an exactly constant Y=128 plane — the historical
+  `#[ignore]` on that regression test is lifted). The integration
+  suite's "accept `Unsupported` when the AV1 decoder declines"
+  tolerance is retired; fixture decode success is now the gate.
+  (10/12-bit primaries were initially rejected with a precise
+  `Unsupported` naming the then-pending high-bit-depth composition;
+  that gap is closed by the HBD composition entry above.)
+- `register_with_av1` restored to its historical contract: registers
+  both the AVIF factories and `oxideav-av1`'s own codec registration
+  in one call.
+- `StillProperties` pass-through on `encode_still`: Exif (`cdsc`,
+  av1-avif §5.2), XMP (`mime` + `cdsc`, §5.3), HDR descriptive
+  properties (`mdcv` / `clli` / `amve`), orientation (`irot` /
+  `imir` — composing with the encoder's own padding `clap` under the
+  HEIF §6.5.10 order), and `pasp` — muxed alongside the coded item;
+  the grid path rejects them until it grows the same surface.
+- **Registry `Encoder` goes live** — `make_encoder` / `AvifEncoder`
+  now encode: every video frame sent through `Encoder::send_frame`
+  becomes one complete AVIF file packet (keyframe-flagged, `pts`
+  carried through) via the `still` pipeline. Input formats: planar
+  YUV 8-bit (`Yuv420P`/`Yuv422P`/`Yuv444P`/`Gray8` + the full-range
+  `YuvJ*` variants, which attach a full-range `nclx` and signal
+  §5.5.2 `color_range = 1` in-stream), 10/12-bit `*P10Le`/`*P12Le` +
+  `Gray10Le`/`Gray12Le`, packed `Rgb24`/`Rgba`/`Bgr24`/`Bgra`
+  (identity-matrix 4:4:4, alpha → auxiliary item), `Yuva420P`, and
+  `Ya8`. Codec options: `q` (colour `base_q_idx`, default 0 =
+  lossless), `alpha_q`, `premultiplied`. The former
+  "missing AV1 encoder" `Unsupported` stub is gone.
+- Fuzz: new in-tree self-roundtrip harness
+  (`oxideav_encode_oxideav_decode_roundtrip`) — fuzz-shaped RGBA →
+  lossless `encode_still` → own-decoder decode → byte-exact pixel
+  assert; never skips (89k executions clean on the bring-up run).
+  The fuzz manifest's stale oxideav-av1 0.1.7 pin is re-resolved to
+  the current release line so the harnesses build against the same
+  producer the library uses.
+- **Pixel → AVIF still encoder** (`still` module, registry-gated):
+  [`StillImage`] + [`encode_still`] / [`encode_still_grid`] turn raw
+  pixels into a complete AVIF file by driving `oxideav-av1`'s
+  conformance-grade KEY-frame encoder and wrapping the coded payload
+  through the crate's own muxer. Coverage: the full (bit depth ×
+  chroma format) matrix — 8/10/12-bit × 4:2:0 / 4:2:2 / 4:4:4 /
+  monochrome (§6.4.1 `seq_profile` elected per pairing; the emitted
+  4-byte `av1C` mirrors the sequence header per the av1-avif §2.2.1
+  `shall`); **RGB(A)** via the H.273 identity matrix in 4:4:4
+  (Y = G, Cb = B, Cr = R — byte-exact lossless round-trips, `colr`
+  `nclx` identity triple signalled full-range); **alpha** as a hidden
+  monochrome auxiliary (§4.1: same bit depth as the master, `auxC`
+  URN + `auxl` iref, `prem` on request); **arbitrary extents** via
+  edge-replicated padding to the coded 8-pixel grid + an essential
+  top-left-anchored `clap` (§2.2.3) with `ispe` documenting the coded
+  extents (§2.2.2 `shall`); **grid encode** (HEIF §6.6.2) splitting
+  the canvas into equal coded tiles with right/bottom trim. The
+  `ftyp` profile brand follows the elected profile (§8): Main →
+  `MA1B`, High → `MA1A`, Professional (4:2:2 / 12-bit) → general
+  brands only (§8.1). Because av1-avif §4.1 has readers ignore any
+  `colr` on the alpha item and makes `color_range = 1` (and
+  `mono_chrome = 1`) an explicit `shall` on every AV1 Auxiliary Image
+  Item, the alpha stream's §5.5.2 `color_range` flag is re-signalled
+  to full range by re-encoding the Sequence Header OBU (a fixed-width
+  display-metadata bit — decode math unaffected); the same
+  consistency splice applies to colour streams paired with a
+  full-range `nclx`. Validation: lossless
+  round-trips are sample-exact through the crate's own decoder for
+  every pairing (initially 8-bit only; the 10/12-bit legs joined with
+  the HBD composition entry above),
+  lossy encodes are PSNR-gated, grid seams are pixel-exact, and a
+  black-box acceptance leg decodes the emitted files through an
+  external AVIF decoder binary (Y4M plane compare — exact) when one
+  is installed.
+- Alpha composition now covers every 8-bit chroma layout: new
+  `AvifPixelFormat::Yuva422P` / `Yuva444P` variants (mapped to the
+  matching `oxideav-core` formats), `composite_alpha` arms for
+  4:2:2 / 4:4:4 colour frames, and full-resolution alpha-plane
+  handling in the `clap` / `irot` / `imir` transform geometry (the
+  alpha plane of a `Yuva*` frame rides at luma resolution).
+- **`no_profile_brand()`** on both `AvifMuxer` and `AvifGridMuxer`
+  (which also gains `advanced_profile()`): `ftyp` lists only the
+  general brands (`avif` / `mif1` / `miaf`) — the av1-avif §8.1 shape
+  for payloads whose AV1 characteristics match neither defined
+  profile, e.g. AV1 Professional-profile streams (4:2:2 at any depth,
+  12-bit at any subsampling), which fail both the `MA1B` Main-profile
+  `shall` (§8.2) and the `MA1A` High-profile `shall` (§8.3).
+
+- **AVIF container encoder / muxer** (`mux` module — av1-avif §2 / §4.1 /
+  §9.1.1, HEIF §6.6.2 / ISO-BMFF §8.11). New [`AvifMuxer`],
+  [`AvifGridMuxer`], [`GridTile`], and the [`encode_still_av1`]
+  convenience emit a conformant AVIF file (`ftyp` `avif`/`mif1`/`miaf`/
+  `MA1B` + `meta` box tree + `mdat`) around an **already-coded** AV1
+  Image Item Data payload plus its `av1C` record — the AV1 bitstream is
+  taken black-box; the muxer does no pixel coding. The `meta` tree is
+  written end-to-end: `hdlr` (`pict`), `pitm`, `iinf`/`infe` (v2, with
+  the hidden-item flag), `iref`, `iprp` (`ipco` + `ipma`, small-index
+  form with property dedup), and `iloc` (v0, single-extent file-offset
+  `construction_method == 0`; a two-pass build measures the `meta` length
+  then patches absolute `mdat` offsets). Item properties emitted: `av1C`
+  (essential), `ispe`, `pixi`, `colr` (`nclx` + ICC `prof`), `pasp`,
+  `clap` / `irot` / `imir` (essential transformative). An AV1-coded
+  **alpha** plane muxes as a hidden monochrome `av01` auxiliary carrying
+  the alpha `auxC` URN and linked to the primary via an `auxl` iref
+  (`prem` when premultiplied). **Grid** derivation emits a `grid` primary
+  (16-bit form) fed by `rows × columns` hidden `av01` tiles via a `dimg`
+  iref. Output round-trips through this crate's own `parse` /
+  `parse_header` path byte-for-byte (coded payload + every property),
+  and passes the `audit_mif1` structural-brand audit. A black-box
+  round-trip integration test lifts a real fixture's coded AV1 stream +
+  `av1C` + `ispe` + `pixi` + `colr`, re-muxes, and re-parses to prove
+  pixel-consistent re-encoding without an AV1 encoder.
+
+- **Muxer HDR / metadata / profile extensions.** `AvifMuxer` now also
+  emits HDR descriptive properties `mdcv` (ST 2086 mastering display),
+  `clli` (MaxCLL/MaxFALL) and `amve` (ambient viewing environment, AVIF
+  §6.5.36); **Exif** (`with_exif`, item type `Exif`) and **XMP**
+  (`with_xmp`, a `mime` item with content type `application/rdf+xml`)
+  metadata items, each linked to the primary via a `cdsc` iref and
+  resolvable through `inspect`; and the AVIF **Advanced Profile**
+  (`advanced_profile()` → `MA1A` brand instead of `MA1B`). `AvifGridMuxer`
+  now emits the **32-bit `grid` descriptor** form automatically when the
+  output canvas exceeds 65535 px. All new paths round-trip through the
+  crate's own reader.
+
+- **Muxer depth-map auxiliary + profile-audit validation.**
+  `AvifMuxer::with_depth` emits an AV1-coded depth map as a hidden
+  monochrome `av01` auxiliary carrying the depth `auxC` URN
+  (`urn:mpeg:mpegB:cicp:systems:auxiliary:depth`, HEIF §6.5.8) + an
+  `auxl` iref to the primary; surfaced by `inspect` as
+  `depth_map_item_id`. A validation test confirms a muxed baseline file
+  (built from a real fixture's black-box AV1 stream) passes the crate's
+  own av1-avif §8.2 Baseline (`MA1B`) profile-compliance audit.
+
+- **`oxideav_core::Encoder` trait wiring** (`encoder` module). The
+  registry encoder factory (`make_encoder`) now returns a live
+  [`AvifEncoder`] rather than failing at construction. Because oxideav
+  ships no AV1 pixel encoder yet, `Encoder::send_frame` surfaces a
+  precise `Unsupported` naming the missing AV1-encode dependency and
+  pointing callers at `AvifMuxer` for black-box muxing; `codec_id` /
+  `output_params` / `flush` are functional. Registered alongside the
+  decoder via `register_codecs`.
+
+- **Entity-group family — `tsyn` / `iaug` / `slid` / `albc` / `favc` +
+  bracketed sets** (HEIF §6.8.3 / §6.8.4 / §6.8.9 / §6.8.7 / §6.8.6).
+  `EntityGroup` now retains the `EntityToGroupBox` 24-bit `flags` and
+  gains typed classifiers: `is_time_synchronized` (`'tsyn'`),
+  `is_audio_to_image` (`'iaug'`) with `audio_repeats()` decoding the
+  flags-LSB audio-repeat semantic, `is_slideshow` (`'slid'`),
+  `is_album_collection` / `is_favorites_collection` / `is_user_collection`
+  (`'albc'` / `'favc'`), and `is_bracketed_set` / `bracketing_kind`
+  classifying the five §6.8.6 capture-time sets into a new
+  `BracketingKind` (`aebr`/`wbbr`/`fobr`/`afbr`/`dobr`).
+  `inspect::entity_groups` enumerates the file's `grpl` decode-free.
+
+- **Bracketing + equivalence sample-group entries** (HEIF §6.8.6.2–.6 /
+  §6.8.1.2.2). `SampleGroupDescription` now slices and retains the raw
+  per-entry `VisualSampleGroupEntry` payloads (v1 `default_length`
+  fixed-size, or self-describing `description_length`) into `entries`.
+  `bracketing_entries()` decodes them into a typed `BracketingEntry`
+  (AutoExposure / WhiteBalance / Focus — with the denominator-0 = infinity
+  convention / FlashExposure / DepthOfField), and `equivalence_entries()`
+  decodes the `'eqiv'` `VisualEquivalenceEntry` (`time_offset` +
+  8.8-fixed `timescale_multiplier`, `timescale_multiplier_f64()`
+  returning `None` for the reserved value 0). New re-exports:
+  `BracketingEntry`, `VisualEquivalenceEntry`, `entity_groups`,
+  `BracketingKind`.
+
+- **Derived region items** (HEIF §11.3.3.2.1).
+  `region::resolve_derived_region_items` finds every identity (`'iden'`)
+  derived region item — an `'iden'`-typed item carrying a `'drgn'` item
+  reference to its input region item — and audits it against the
+  §11.3.3.2.1 / §11.3.3.1 `shall`s (exactly one `'drgn'` input,
+  `'drgn'`-iref-count ≤ 1, no item body), resolving the single source
+  region item id. Returns `DerivedRegionItem` records with `is_compliant`
+  / `missing` projections. An `'iden'` item *without* a `'drgn'`
+  reference is correctly treated as an image-level identity derivation
+  (§6.6.2.1), not a region derivation. New re-exports:
+  `resolve_derived_region_items`, `DerivedRegionItem`, `REF_TYPE_DRGN`.
+  3 new tests.
+
+- **`'pred'` brand file-constraint audit** (HEIF §10.2.4.2).
+  `audit_pred_brand(meta, brands)` checks the two `shall`s a file claiming
+  the `'pred'` brand (predictively coded image items) must satisfy:
+  dependency closure (every `'pred'` reference target is an item present in
+  `iinf`) and — when `'mif1'` is also claimed — primary-item independence
+  (the primary shall carry no `'pred'` reference). Returns a
+  `PredBrandCompliance` with `claims_pred` / `claims_mif1` /
+  `predictive_item_count` / `missing_dependency_ids` /
+  `primary_not_independent` plus `is_compliant` / `missing` projections; a
+  file making no `'pred'` claim is trivially compliant. New re-exports:
+  `audit_pred_brand`, `PredBrandCompliance`. 5 new tests.
+
+- **Coded-item dependency roles** (HEIF §6.4.7 / §6.4.8 / §6.4.9).
+  `inspect::coded_item_dependencies` classifies an image item from its
+  *outgoing* item references into a `CodedItemDependencies` carrying the
+  `'pred'` predictively-coded decoding-order list (§6.4.9), the `'base'`
+  pre-derived-coded inputs (§6.4.7), the `'exbl'` scalable base-layer
+  reference (§6.4.8), and the `'tbas'` tile-base relation, with
+  `is_predictively_coded` / `is_pre_derived` / `has_dependencies`
+  projections. Backed by a new `Meta::iref_targets_of(reference_type,
+  from)` helper that walks references *out* of an item (concatenating the
+  `to_ids` of every matching entry in order — load-bearing for the
+  ordered `'pred'` dependency list). New re-exports:
+  `coded_item_dependencies`, `CodedItemDependencies`. 5 new tests.
+
+- **Text / font item enumeration** (HEIF §6.10.1 / §6.10.3).
+  `inspect::text_items` (primary) and `text_items_for` (any image item)
+  walk the `'text'` item reference that binds a text item to the image it
+  annotates (§6.10.1.1), keep `'mime'` sources, and return
+  `ResolvedTextItem` records `{ text_item_id, image_item_id, content_type,
+  font_item_ids }` where `font_item_ids` are the `'font'`-iref-linked font
+  items. `is_font_item` recognises a §6.10.3 font item (a `'mime'` item
+  whose `content_type` starts with `font/`, RFC 8081). New re-exports:
+  `text_items`, `text_items_for`, `is_font_item`, `ResolvedTextItem`.
+
+- **Progressive / burst / multi-source entity-group projections**
+  (HEIF §6.8.9 / §6.8.10 / §9.4). `EntityGroup` gains `is_progressive`
+  (`'prgr'` — image items at increasing quality for progressive
+  rendering), `is_burst` (`'brst'` — temporal burst set), and
+  `is_multi_source` (`'msrc'`) alongside the existing `is_alternates` /
+  `is_stereo_pair` / `is_equivalence` / `is_panorama` projections.
+
+- **HEIF region items** (ISO/IEC 23008-12:2025 §11.2 / §11.3). New
+  `region` module: `RegionItem::parse` decodes a `'rgan'` region item's
+  data (§11.3.2.2 — `version=0`, `(flags & 1)`-selected 16/32-bit
+  `reference_*` and per-geometry fields, `region_count`) into a typed
+  `RegionItem` whose `regions` are `RegionGeometry` variants covering all
+  seven §11.2.1 geometry types: `Point` (0), `Rectangle` (1), `Ellipse`
+  (2), `Polygon` (3), `ReferencedMask` (4, `mask_ref_idx` present only for
+  region tracks — absent in a region item), `InlineMask` (5, with
+  `mask_coding_method` / `mask_coding_parameters` and the trailing coded
+  bit `data`), and `Polyline` (6). Signed coordinates are sign-extended
+  across the selected field width; an unknown `version` or reserved
+  `geometry_type` is rejected. `inspect::region_items` (primary item) and
+  `region_items_for` (any image item) walk the `'cdsc'` iref binding a
+  region item to the image it annotates (§11.3.1), filter to `'rgan'`
+  sources, resolve each one's data through the full
+  construction-method-aware `iloc` path, and return `ResolvedRegionItem`
+  records `{ region_item_id, image_item_id, region }`. The companion
+  Mask Configuration property `'mskC'` (§11.2.2.2) is parsed into a typed
+  `MaskC { bits_per_pixel }` `Property` variant with `is_defined_depth` /
+  `pixels_per_byte` helpers (§11.2.2 byte packing). Derived region items
+  (`'drgn'`, §11.3.3) are deferred. 18 new tests. New re-exports:
+  `region` module, `RegionItem`, `RegionGeometry`, `ITEM_TYPE_RGAN`,
+  `ITEM_TYPE_MSKI`, `MaskC`, `region_items`, `region_items_for`,
+  `ResolvedRegionItem`.
+
+- **Four new HEIF item properties** (ISO/IEC 23008-12:2025 3rd ed.): the
+  Single Stream property `'sstr'` (§6.5.38 — bare `ItemProperty` marker
+  signalling that a derived image item's input items collectively form a
+  single decodable bitstream); the Text Layout property `'txlo'`
+  (§6.10.2.1 — `(flags & 1)`-selected 16/32-bit `reference_*`/`x`/`y`/
+  `width`/`height` geometry with sign-extended `x`/`y`, an 8.8
+  fixed-point `font_size` percentage exposed via `Txlo::font_size_percent`,
+  and TTML2 `direction`/`writing_mode` utf8strings); the Extended Language
+  property `'elng'` (§6.10.2.2 — a single BCP 47 language tag carrying
+  ISO/IEC 14496-12 ExtendedLanguageBox semantics applied to an item); and
+  the Font Characteristics property `'fnch'` (§6.10.4.1 — `font_family` /
+  `font_style` / `font_weight` utf8strings for the §6.10.4.1.1 font
+  selection algorithm). All four parse into typed `Property` variants
+  (`Sstr` / `Txlo` / `Elng` / `Fnch`), dispatch through `parse_ipco`,
+  report their `kind()`, and — being recognised typed properties — no
+  longer fall into `Property::Other` (so an `ipma`-essential association
+  to one of them is recognised rather than flagged unsupported). Version
+  guards reject non-zero `version`. 15 new unit tests. New re-exports:
+  `Sstr`, `Txlo`, `Elng`, `Fnch`.
+
+- `DerivationGraph::coded_leaf_dims` (decode-buffer sizing: each leaf id
+  paired with its `'ispe'` reconstructed dimensions, in decode order) and
+  `DerivationGraph::nodes_at_depth` (the node ids at a given derivation
+  depth). The graph fuzz/totality test now also drives
+  `build_derivation_graph` on every item as a root across ~30 000
+  adversarially-shaped graphs, asserting termination, no duplicate nodes,
+  `depth ≤ MAX_DERIVATION_DEPTH`, and no duplicate coded leaves — plus
+  `resolve_grids` / `resolve_tone_maps` added to the same totality sweep.
+
+- **`construction_method == 2` (item-offset) derived-image descriptors**
+  (ISO/IEC 14496-12 §8.11.3.3). The derived-geometry descriptor resolver
+  (`resolve_descriptor_bytes`, behind `resolve_grids` / `resolve_overlays` /
+  `reconstructed_dims` / the derivation graph) previously skipped a `'grid'`
+  or `'iovl'` whose descriptor payload was stored as a range of another
+  item's data (cm=2), silently dropping it from the resolution surfaces. It
+  now delegates cm=2 to `item_bytes_owned_full`, which follows the `'iloc'`
+  item reference naming the data-origin item and recurses through cm=0/cm=1
+  origins (depth-capped, cycle-rejecting). A grid/overlay descriptor stored
+  this way (uncommon but spec-legal) now resolves end-to-end. 1 new unit
+  test.
+
+- **Unified derivation-graph resolution** (HEIF §6.6). New
+  `build_derivation_graph` walks the `'dimg'` derivation graph rooted at any
+  image item (typically the primary) and returns a `DerivationGraph`: every
+  reachable node (`DerivationNode` with `DerivationKind` ∈ `Coded` / `Grid` /
+  `Overlay` / `Identity` / `ToneMap` / `SampleTransform` / `Unknown`), each
+  node's box-graph-only `reconstructed_dims` + `output_dims` (the latter
+  folding the node's own `'clap'`/`'irot'`/`'imir'`/`'iscl'` transform chain
+  per §6.6.1), and the distinct coded `'av01'` leaf ids a renderer must decode
+  (`coded_leaf_ids`, de-duplicated, first-visit order). This ties the existing
+  per-derivation resolvers (`resolve_grids` / `resolve_overlays` /
+  `resolve_iden_derivations` / `resolve_tone_maps`) into a single traversal
+  that also handles **nested** derivations (e.g. an `'iden'` crop of a
+  `'grid'`, or a `'tmap'` whose base is itself a `'grid'`) and **diamond**
+  graphs (two derivations sharing a leaf → leaf listed once). The walk is an
+  iterative pre-order over an explicit stack (no native-stack blow-up on deep
+  nesting), visits each item id once, and is depth-bounded by
+  `MAX_DERIVATION_DEPTH` with a `truncated` flag set when a `'dimg'` cycle
+  hits the bound. `DerivationGraph` exposes `output_dims` / `root_is_coded` /
+  `node` / `derived_node_count`; `DerivationNode::transform_chain` and
+  `DerivationKind::is_coded` are convenience accessors. A one-call top-level
+  `inspect::derivation_graph(file)` wrapper parses the header, resolves the
+  primary from `pitm`, and returns the plan without any AV1 decode. New
+  re-exports: `build_derivation_graph`, `DerivationGraph`, `DerivationKind`,
+  `DerivationNode`, `derivation_graph`. 5 new unit tests (coded root, grid
+  root, iden-over-grid nesting, diamond dedup, cycle truncation) + 2
+  integration tests (monochrome coded primary, synthetic grid primary).
+- **Tone-map (`'tmap'`) derivation geometry resolution** (av1-avif §4.2.2).
+  `reconstructed_dims` now resolves a `'tmap'` derived item to its **base**
+  image input's (`dimg` input 0) output dimensions — folding the base's own
+  transforms / grid / overlay derivation — instead of returning `None`. This
+  unblocks dimension resolution for the standard gain-map AVIF layout whose
+  primary item is the `'tmap'`. A new `resolve_tone_maps` resolver returns one
+  `ToneMapResolution` per `'tmap'` item (base id, gain-map input id(s),
+  rendered/base extents, per-gain-map coded extents) with
+  `ToneMapResolution::upsamples_gain_map` flagging gain maps coded smaller than
+  the rendered image. Surfaced on `AvifInfo::tone_map_resolutions` +
+  `AvifInfo::tone_map_resolution_for`, mirroring the existing `iovl` / `iden`
+  resolution surfaces. No AV1 decode — geometry from the box graph alone. 7
+  new unit tests.
+- **`'sato'` (Sample Transform) derivation dimension resolution** (av1-avif
+  §4.2.3.1). `reconstructed_dims` now resolves a `'sato'` derived item to its
+  own `'ispe'` extents (its inputs share those extents), falling back to its
+  first input's reconstructed dimensions when the sato lacks an `'ispe'`.
+  `'sato'` primaries route through the derived-primary `AvifInfo` builder
+  (borrowing a representative `av1C` via the shared coded-leaf walk) like
+  `iovl`/`iden`/`tmap`. 2 new unit tests.
+- **`'grid'` tile-derivation geometry resolution** (ISO/IEC 23008-12
+  §6.6.2.3). New `resolve_grids` resolver returns one `GridResolution` per
+  `'grid'` item: the parsed descriptor, the common tile dimensions (from the
+  first tile's box-graph reconstructed extents), and one `GridTilePlacement`
+  per tile (source item id, row/col, row-major canvas origin).
+  `GridTilePlacement::visible` clips a tile against the canvas (§6.6.2.3.1
+  right/bottom trim); `is_trimmed` flags edge tiles;
+  `GridResolution::{covers_canvas, trimmed_tile_count}` report the §6.6.2.3.1
+  coverage `shall` and the trim count. Surfaced on
+  `AvifInfo::grid_resolutions` + `has_grid` + `grid_resolution_for`, mirroring
+  the `iovl`/`iden`/`tmap` surfaces — no AV1 decode. `ImageGrid` now derives
+  `PartialEq`/`Eq`. 2 new unit tests + grid integration assertions.
+- Gain-map **application** surface (ISO 21496-1:2025 §6) on the parsed
+  `'tmap'` descriptor: the metadata can now be applied to a linear
+  baseline image to reconstruct the alternate (HDR) rendition, not just
+  parsed. `GainMapChannel::unnormalize_log2_gain` inverts the §A.3.3
+  normalization and §A.3.4 gamma (Formula 1) to recover the log2 gain
+  `G`; `GainMapMetadata::weight_factor` computes the §6.3 Formula (3)
+  weighting factor `W` for a target HDR headroom (clamped to
+  `[H_baseline, H_alternate]`, sign following `H_alternate − H_baseline`,
+  so `W == 0` at baseline and `W == ±1` at full application);
+  `GainMapMetadata::apply_component` combines them via §6.3 Formula (2)
+  `Alternate = (Baseline + k_baseline) · 2^(W·G) − k_alternate`, and
+  `GainMapMetadata::apply_rgb` applies it to all three colour components.
+  The §5.2.5.1 per-component-metadata broadcast (single-channel metadata
+  applying to R/G/B) is handled internally. 11 new unit tests cover the
+  three formulas, gamma inversion, negative-span sign flip, per-component
+  indexing, broadcast, and an Annex A.2 round trip.
+- `GainMapMetadata::apply_plane_rgb` — buffer-level §6.3 application over
+  a whole linear baseline RGB plane (`width × height × 3` interleaved),
+  producing the alternate RGB plane. Accepts either an achromatic gain
+  plane (`width × height`, broadcast to RGB per §6.3 NOTE 2) or an RGB
+  gain plane (`width × height × 3`); the §6.3 weight is computed once per
+  plane. Rejects length mismatches and dimension overflow, and documents
+  the §6.2.2 resampling step as the caller's responsibility (the gain
+  plane must already match the baseline dimensions). 4 new unit tests.
+
+- `construction_method == 2` (item_offset) `iloc` resolution (ISO/IEC
+  14496-12 §8.11.3.3). The per-extent `extent_index` is now parsed and
+  retained on `IlocExtent` (previously discarded); for a cm=2 item it is
+  the 1-based index of the `'iloc'` item reference naming the
+  data-origin item (0 implies 1). New `item_bytes_owned_full(file, meta,
+  item_id)` resolves any of the three construction methods, following the
+  `'iloc'` iref for cm=2 and slicing `base_offset + extent_offset` (with
+  `extent_length == 0` meaning the whole referenced item) out of the
+  referenced item's concatenated data. The data-origin item is resolved
+  through the same path, so cm=2 may chain through cm=0 / cm=1 items;
+  recursion is depth-capped and self-/cycle-references are rejected.
+  `inspect::item_payload_bytes` now routes through this resolver, so
+  Exif / XMP / mime / `tmap` metadata items stored as item offsets into
+  another item resolve too.
+- `idat`-backed item byte resolution (ISO/IEC 14496-12 §8.11.3
+  `construction_method == 1`, idat_offset). Previously every byte-fetch
+  path hard-rejected non-zero construction methods, so a primary image
+  item (or grid tile / alpha auxiliary) whose payload lived in the `meta`
+  box's `idat` could not be resolved at all. New
+  `item_bytes_with_idat` / `item_bytes_owned_with_idat` resolve an
+  `iloc` entry against either the file (cm=0) or the `idat` (cm=1),
+  concatenating multi-extent items of either method; the extent offset
+  indexes into the first byte of `data[]` in the ItemDataBox.
+  `AvifImage::primary_item_data` is now a `Cow<[u8]>` — still a zero-copy
+  borrow into the file for the common single-extent cm=0 case, owned when
+  the bytes are reconstructed from `idat` or multiple extents. `parse`
+  and `inspect` now transparently resolve an idat-backed primary `av01`
+  item. (`construction_method == 2` / item_offset support was added
+  subsequently — see the cm=2 entry above.)
+
+- All item-decode paths are now idat-aware: the grid descriptor + grid
+  tile decode, the alpha auxiliary decode, the grid-descriptor inspection
+  path, and `item_payload_bytes` (Exif / XMP / mime / `tmap` metadata
+  extraction) resolve `construction_method == 1` items the same as the
+  primary path. A file that stores its grid tiles, alpha plane, or
+  metadata items in `idat` rather than `mdat` now resolves end-to-end.
+
+### Changed
+
+- Marked internal plumbing `#[doc(hidden)]` so semver tooling tracks only
+  the stable surface: the `box_parser` byte-cursor helpers (`read_u16` /
+  `read_u32` / `read_u64` / `read_var_uint` / `read_cstr`) and the
+  module-local `region::ITEM_TYPE_IDEN` duplicate (the public constant is
+  the crate-root re-export from `meta`). No signature or behaviour change.
+
+- The `inspect` path now reuses the `idat` (ItemDataBox) payload captured
+  by `Meta::parse` instead of re-walking the file with a private
+  `extract_idat` helper (now removed). Single source of truth for the
+  meta box's `idat`; behaviour is unchanged.
+
+- Derived-image geometry resolution (HEIF §6.3 / §6.6.2, `derived`
+  module): a box-graph-only evaluation surface that computes derived-image
+  output geometry without decoding any AV1 bitstream. New
+  `DimTransform` enumerates the four dimension-affecting transformative
+  item properties (`irot` rotate, `imir` mirror, `clap` clean-aperture
+  crop, `iscl` rational scale); `transform_chain` collects them per item
+  in `ipma` association order (skipping descriptive properties);
+  `output_dims_from_reconstructed` folds the chain to the §6.3 output
+  image dimensions; and `reconstructed_dims` resolves an item's
+  reconstructed dimensions from the graph — `grid`/`iovl` descriptor
+  `output_width`/`output_height`, an `iden`'s single recursively-resolved
+  input, or a coded item's `ispe` — bounded by `MAX_DERIVATION_DEPTH`
+  (16) to break `dimg` cycles. `resolve_overlays` fully resolves every
+  `iovl` overlay end-to-end (HEIF §6.6.2.2): each `OverlayResolution`
+  pairs the parsed descriptor with one `OverlayPlacement` per input
+  carrying the resolved offset + input dimensions, and
+  `OverlayPlacement::{visible, fully_visible, off_canvas}` clip the input
+  against `[0, output_width) × [0, output_height)` per §6.6.2.2.3;
+  `OverlayResolution::canvas_partially_filled` reports whether the fill
+  colour shows through. `resolve_iden_derivations` resolves every `iden`
+  identity derivation (§6.6.2.1): each `IdenResolution` carries the single
+  source item, the source's reconstructed dimensions, the iden item's own
+  transform chain, and the resulting output dimensions (the §6.6.2.1
+  NOTE 2 "crop of the original" case). Descriptor payloads resolve via a
+  local `iloc` reader handling both `construction_method` 0 (file) and 1
+  (`idat`). The new surface is re-exported from the crate root and
+  surfaced on `AvifInfo::{overlay_resolutions, iden_resolutions}` with
+  `has_overlay` / `overlay_for` / `iden_resolution_for` accessors. The
+  `inspect()` primary dispatch now accepts `iovl` and `iden` derived
+  primaries (new `build_info_derived` path: reports the derivation's
+  output dimensions and borrows the representative `av1C` from the first
+  coded `av01` leaf in the `dimg` chain), alongside the existing grid and
+  coded-item paths.
+
+- Property/fuzz tests for the box-parsing surface (`derived` module):
+  five deterministic splitmix64-seeded property tests assert that
+  `ImageOverlay::parse`, `GainMapMetadata::parse`, `SampleTransform::parse`,
+  `parse_grpl`, and the full geometry resolver (`resolve_overlays` /
+  `resolve_iden_derivations` / `reconstructed_dims`) are **total** — they
+  return `Ok`/`Err` and never panic, overflow, or fail to terminate —
+  across ~85 000 random and adversarially-shaped byte/graph inputs
+  (including `dimg` cycles).
+
+- AVIS `ssix` SubsegmentIndexBox (ISO/IEC 14496-12 §8.16.4, `avis`
+  module): `SubsegmentIndex` / `SubsegmentRange` types plus `parse_ssix`
+  and the top-level `parse_subsegment_indexes` walk. `ssix` is a
+  `File`-container box that follows the `sidx` it documents and maps each
+  indexed subsegment to its `leva`-level byte-range partitions —
+  `subsegment_count` × (`range_count` × `(level: u8, range_size: u24)`),
+  all big-endian — enabling partial-subsegment (byte-range) access in
+  DASH-style fragmented / segmented AVIS delivery. `parse_ssix` is
+  `FullBox('ssix', 0, 0)`: it rejects non-zero versions and truncated
+  bodies; the top-level walk skips a malformed `ssix` so other boxes stay
+  reachable. Surfaced on `AvisMeta::subsegment_indexes` (empty for the
+  common non-fragmented still-image case). Companion to the existing
+  `prft` top-level walk.
+
+- AVIF §6.5.36 `amve` AmbientViewingEnvironmentBox descriptive item
+  property (`meta` module): `Amve` carries the post-2015 ISO/IEC
+  14496-12 ambient-viewing-environment HDR metadata — a fixed 8-byte
+  plain `Box` (no version/flags) with `ambient_illuminance`
+  (`unsigned int(32)`, units of 0.0001 lux) and `ambient_light_x` /
+  `ambient_light_y` (`unsigned int(16)` each, CIE 1931 chromaticity in
+  units of 0.00002). `parse_amve` rejects bodies shorter than 8 bytes;
+  `Amve::illuminance_lux` / `Amve::light_xy` decode the scaled values.
+  Routed through `Property::Amve` (kind dispatch + `ipco` parse),
+  extracted onto `AvifImage::amve` and surfaced on `AvifInfo::amve`
+  (primary-item, with grid-item → first-tile fallback) plus
+  `AvifInfo::has_ambient_viewing_environment`. Unlike `mdcv`/`clli`,
+  which describe the content's mastering environment, `amve` describes
+  the viewer's nominal ambient environment — the two are complementary
+  and the box maps field-for-field to the `ambient_viewing_environment`
+  SEI (no scaling conversion). Validated against the BT.2035 / D65
+  worked example (10 lux, x=0.3127, y=0.3290; wire body
+  `00 01 86 A0 3D 13 40 42`).
+- ISO/IEC 14496-12 §8.16.5 `prft` ProducerReferenceTimeBox parser for
+  fragmented / segmented AVIS image sequences (`avis` module):
+  `parse_prft` decodes a single box body (v0 32-bit / v1 64-bit
+  `media_time`, NTP 64-bit `ntp_timestamp`, `reference_track_ID`),
+  rejecting unknown versions + truncated bodies.
+  `parse_producer_reference_times` walks the file's top-level boxes
+  (`prft` is a `File`-container box that precedes the `moof` it
+  documents, sitting beside `styp` / `sidx`) and collects every entry
+  in bitstream order, skipping malformed ones. Surfaced on
+  `AvisMeta::producer_reference_times` (empty for the common
+  non-fragmented case). `ProducerReferenceTime` exposes NTP
+  seconds/fraction split, later-edition flag-bit helpers
+  (`is_encoder_input_output` / `is_finalization_time` /
+  `is_file_write_time`), and `unix_seconds` (NTP→Unix epoch conversion
+  via the new `NTP_UNIX_EPOCH_OFFSET_SECONDS` constant, RFC 5905).
+
+## [0.0.10](https://github.com/OxideAV/oxideav-avif/compare/v0.0.9...v0.0.10) - 2026-06-15
+
+### Other
+
+- HEIF §6.5.39 cmex CameraExtrinsicMatrixProperty parser
+- refresh to current status, drop per-round changelog cruft
+
+### Added
+
+- ISO/IEC 14496-12 sample-grouping family for AVIS image-sequence
+  tracks (`sample_group` module): `sbgp` (SampleToGroupBox, :2015
+  §8.9.2, v0 + v1 `grouping_type_parameter`) and `csgp`
+  (CompactSampleToGroupBox, :2020 §8.9.5 — `FullBox.flags` packs three
+  2-bit field-width codes `4 << code` ∈ {4,8,16,32} bits plus a
+  `grouping_type_parameter_present` bit; patterns expand to run-length
+  form) decode into a normalised `SampleToGroup` with ordered
+  `SampleToGroupRun`s and a `group_index_for_sample` per-sample lookup.
+  A `csgp` index's most-significant bit is decoded as the `traf`
+  fragment-local / global selector via
+  `SampleToGroupRun::{is_fragment_local, description_index}`. The
+  `sgpd` (SampleGroupDescriptionBox, §8.9.3) generic header — grouping
+  type, v1 `default_length`, v2 `default_group_description_index`,
+  entry count — parses into `SampleGroupDescription`. `parse_avis` now
+  surfaces both via `AvisMeta::{sample_to_groups,
+  sample_group_descriptions}`, and `AvisInfo::sample_to_group_count`
+  reports the mapping count. New public API: `parse_sbgp` /
+  `parse_csgp` / `parse_sgpd` / `parse_sample_to_groups` /
+  `parse_sample_group_descriptions` plus the `SampleToGroup`,
+  `SampleToGroupRun`, `SampleToGroupKind`, `SampleGroupDescription`
+  types. (`csgp` box layout per
+  `docs/container/isobmff/post-2015-additions.md`; `sbgp`/`sgpd` per
+  the staged :2015 ISOBMFF spec text.)
+- ISO/IEC 23008-12 §6.5.39 CameraExtrinsicMatrixProperty (`cmex`)
+  descriptive item-property parser — describes the spatial setup of the
+  camera(s): a cartesian position (µm) and an orientation of the camera
+  coordinate system within a right-handed 3D world coordinate system,
+  surfaced as `Property::Cmex(Cmex { flags, version, pos_x, pos_y,
+  pos_z, quat_x, quat_y, quat_z, id })` (re-exported as
+  `oxideav_avif::Cmex`). The wire shape follows §6.5.39.2 — an
+  ItemFullProperty(`cmex`, version, flags) whose six presence flags
+  (`pos_x_present` … `id_present`, plus `rot_large_field_size`) select
+  which fields are present; each absent field is stored as `None`
+  (inferred 0 per §6.5.39.3). For `version == 0` the orientation is a
+  quaternion triplet whose element width is 16 or 32 bits per
+  `rot_large_field_size`; helpers compute the §6.5.39.1 normalised unit
+  quaternion `(qX, qY, qZ, qW)` via `Cmex::quaternion` (with
+  `orientationPrecision = rot_large_field_size ? 16 : 0`,
+  `qW = abs(sqrt(1 - (qX²+qY²+qZ²)))` clamped non-negative) and the
+  `RC` 3×3 row-major rotation matrix via `Cmex::rotation_matrix`. The µm
+  position vector is surfaced by `Cmex::position` and the world
+  coordinate-system id by `Cmex::coordinate_system_id`; the presence
+  accessors `pos_x_present` … `id_present` and the `FLAG_*` constants
+  expose the §6.5.39.1 flag semantics. The `version == 1` orientation is
+  a `ViewpointGlobalCoordinateSysRotationStruct` defined in
+  ISO/IEC 23090-7 (outside this crate's clean-room documentation set);
+  a `version == 1` `cmex` carrying `orientation_present` is rejected with
+  `Unsupported` rather than guessing the struct's length, while a
+  `version == 1` `cmex` carrying only positions and/or `id` parses
+  normally.
+
+## [0.0.9](https://github.com/OxideAV/oxideav-avif/compare/v0.0.8...v0.0.9) - 2026-06-15
+
+### Other
+
+- HEIF §6.5.40 cmin camera-intrinsic-matrix item property
+- HEIF §6.5.30–§6.5.35 slideshow transition-effect item properties
+- HEIF §6.5.37 prdi progressive-derived-image-item-information property
+- HEIF §6.5.28 subs sub-sample-information item property
+- HEIF §6.5.29 tols target-output-layer-set item property
+- HEIF §6.5.27 pano panorama-information item-property parser
+- parse HEIF §6.5.26 dobr depth-of-field-information item property
+- HEIF §6.5.25 afbr flash-exposure-information item-property parser
+- HEIF §6.5.24 fobr focus-information item-property parser
+- HEIF §6.5.23 wbbr white-balance-information item-property parser
+- HEIF §6.5.22 aebr auto-exposure-information item-property parser
+- drop release-plz.toml — use release-plz defaults across the workspace
+- HEIF §6.5.21 altt accessibility-text item-property parser
+- HEIF §6.5.20 udes user-description item-property parser
+- HEIF §6.5.19 mdft modification-time item-property parser
+- HEIF §6.5.18 crtt creation-time item-property parser
+- HEIF §6.5.13 iscl + §6.5.17 rref parsers + §7 audit extension
+- AVIS mdhd media-timescale plumb + EditListEntry second-conversion helpers
+- AVIS aggregator (inspect_avis / AvisInfo)
+- AVIS edit list (edts/elst) parse + §8.6.6.3 shall audit
+- §8.2 / §8.3 AVIS sequence-track profile compliance audit
+- §3 AV1 Image Sequence shall-level compliance audit
+- §8.2 / §8.3 AVIF profile compliance audit + attribution scrub
+
+### Added
+
+- ISO/IEC 23008-12 §6.5.40 CameraIntrinsicMatrixProperty (`cmin`)
+  descriptive item-property parser — describes the pinhole-camera
+  intrinsic matrix of the camera that captured the associated image
+  item, surfaced as `Property::Cmin(Cmin { flags, focal_length_x,
+  principal_point_x, principal_point_y, focal_length_y, skew_factor })`
+  (re-exported as `oxideav_avif::Cmin`). The body shape is taken
+  verbatim from §6.5.40.2 — an ItemFullProperty(`cmin`, version=0,
+  flags) with three mandatory `signed int(32)` fields
+  (`focal_length_x`, `principal_point_x`, `principal_point_y`) followed,
+  **only** when `flags & 1` is set (full intrinsics per §6.5.40.3), by a
+  `signed int(32) focal_length_y` + `signed int(32) skew_factor` tail.
+  For the simplified form (`flags & 1 == 0`, no skew / square pixels)
+  the tail is absent and `focal_length_y` / `skew_factor` are `None`;
+  the §6.5.40.3 inferences (`fy = fx`, `s = 0`) are applied by the
+  projection helpers. The two 5-bit power-of-two shift operands embedded
+  in `flags` are decoded per §6.5.40.1
+  (`denominator = 1 << ((flags & 0x001F00) >> 8)`,
+  `skewDenominator = 1 << ((flags & 0x1F0000) >> 16)`) and exposed via
+  `Cmin::{denominator_shift, skew_denominator_shift, denominator,
+  skew_denominator, has_skew}` plus the `Cmin::FLAG_FULL_INTRINSICS`
+  constant; the whole 24-bit `flags` field is preserved so an unknown
+  future bit round-trips. The §6.5.40.1 matrix-entry formulas (which
+  fold in the `image_width` / `image_height` from the associated `ispe`)
+  are applied by `Cmin::{focal_length_x_value, focal_length_y_value,
+  principal_point_x_value, principal_point_y_value, skew_value}`, each
+  returning the floating-point matrix entry (a floating-point, not
+  integer, division per §6.5.40.1 NOTE 3). All five wire fields are
+  reinterpreted as `i32` so a negative principal point or skew
+  round-trips correctly. Unknown `version` rejected, a body short of the
+  three mandatory fields (or, for the full form, the two-field tail)
+  rejected, trailing bytes ignored; descriptive per §6.5.40.1 so a
+  recognised `cmin` never trips
+  `Meta::unsupported_essential_properties`. +13 unit tests (default lib
+  499, standalone lib 484).
+
+- ISO/IEC 23008-12 §6.5.30–§6.5.35 slideshow transition-effect item-property
+  family — six new descriptive/transformative properties that document
+  suggested transitions and timing between consecutive items of a slideshow
+  entity group, each associated with the **first** of the two items
+  involved:
+  - §6.5.30 `wipe` (WipeTransitionEffectProperty) →
+    `Property::Wipe(Wipe { transition_direction })`, with the eight
+    §6.5.30.3 direction constants (`FROM_LEFT` … `FROM_RIGHT_BOTTOM`) and
+    an `is_known_direction` projection.
+  - §6.5.31 `zoom` (ZoomTransitionEffectProperty) →
+    `Property::Zoom(Zoom { transition_direction, transition_shape })`,
+    unpacking the §6.5.31.2 single octet (`unsigned int(1)` direction in
+    the top bit, `unsigned int(7)` shape in the low seven), with
+    `DIRECTION_{IN,OUT}` / `SHAPE_{RECTANGULAR,CIRCLE,STAR}` constants and
+    `is_known_shape`.
+  - §6.5.32 `fade` (FadeTransitionEffectProperty) →
+    `Property::Fade(Fade)` with `THROUGH_WHITE` / `THROUGH_BLACK` /
+    `DISSOLVE`.
+  - §6.5.33 `splt` (SplitTransitionEffectProperty) →
+    `Property::Splt(Splt)` with `VERTICAL_{IN,OUT}` /
+    `HORIZONTAL_{IN,OUT}`.
+  - §6.5.34 `stpe` (SuggestedTransitionPeriodProperty) →
+    `Property::Stpe(Stpe { transition_period })` plus a `seconds()`
+    helper applying the §6.5.34.3 unit (1/16 s).
+  - §6.5.35 `ssld` (SuggestedTimeDisplayDurationProperty) →
+    `Property::Ssld(Ssld { duration })` plus `seconds()` and an
+    `is_reserved()` check for the §6.5.35.3 reserved `duration == 0`
+    sentinel.
+  All six are re-exported as `oxideav_avif::{Wipe, Zoom, Fade, Splt,
+  Stpe, Ssld}`. Each parser rejects an unknown `version`; reserved
+  enumerant values are surfaced verbatim (the `is_known_*` predicates
+  distinguish them); trailing bytes are ignored for forward
+  compatibility. Although §6.5.30–§6.5.33 list the effects as
+  *transformative*, they are slideshow-presentation hints rather than
+  pixel transforms, so a recognised association never trips
+  `Meta::unsupported_essential_properties`. +19 unit tests.
+
+- ISO/IEC 23008-12 §6.5.37 ProgressiveDerivedImageItemInformationProperty
+  (`prdi`) descriptive item-property parser — describes the progressive
+  rendering steps of a **derived** image item, surfaced as
+  `Property::Prdi(Prdi { flags, step_count, item_counts })` (re-exported
+  as `oxideav_avif::Prdi`). The first §6.5.x property whose body is
+  entirely gated by the box `flags` (§6.5.37.2): `step_count` is read iff
+  `one_item_per_step` is clear or `alternative_is_candidate` is set, and
+  the per-step `item_count[]` array iff `one_item_per_step` is clear.
+  Both `step_count` and `item_counts` are `Option`, `Some` exactly when
+  present on the wire; the §6.5.37.3 inference rule (infer `step_count`
+  from the `'dimg'` input count, `item_count == 1` per step) is applied
+  by `Prdi::{step_count_or_inferred, item_count_for_step}`. The three
+  §6.5.37.1 flag bits are exposed via
+  `Prdi::{FLAG_ITEM_REFERENCE_ORDER, FLAG_ONE_ITEM_PER_STEP,
+  FLAG_ALTERNATIVE_IS_CANDIDATE}` + `is_*` projections with the whole
+  24-bit field preserved. Unknown `version` rejected, truncated body
+  rejected, trailing bytes ignored; descriptive so a recognised `prdi`
+  never trips `Meta::unsupported_essential_properties`. +11 unit tests.
+
+- ISO/IEC 23008-12 §6.5.28 SubSampleInformationBox (`subs`) descriptive
+  item-property parser — the one §6.5.x property defined by reference to
+  ISO/IEC 14496-12's `SubSampleInformationBox` (§8.7.7.2) rather than
+  self-contained in the HEIF spec, backfilling the gap the §6.5.29
+  rollout flagged. HEIF §6.5.28 fixes the outer table to a single
+  degenerate row (`entry_count == 1`, that entry's `sample_delta == 0`,
+  both enforced), so the parser surfaces only the inner sub-sample list
+  as `Property::Subs(Subs { flags, entries })` (re-exported as
+  `oxideav_avif::{Subs, SubsEntry}`). Each `SubsEntry` carries
+  `subsample_size` / `subsample_priority` / `discardable` /
+  `codec_specific_parameters`; `subsample_size` is 32-bit on the wire
+  for box `version == 1` and 16-bit for v0, widened to `u32` so callers
+  need not branch on the width. Box `flags` are surfaced because §6.5.28
+  permits zero-or-more `subs` per item and requires their `flags` to
+  differ when more than one is present. `subsample_count == 0` is
+  well-formed (empty `entries`); v0/v1 accepted, other versions
+  rejected; truncated tuples and a non-degenerate outer table rejected;
+  trailing bytes ignored. `subs` is descriptive so a recognised
+  association does not trip `Meta::unsupported_essential_properties`.
+  +14 unit tests.
+- ISO/IEC 23008-12 §6.5.29 TargetOlsProperty (`tols`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.29.2 — an `ItemFullProperty('tols', version=0, flags=0)`
+  followed by a single big-endian `unsigned int(16) target_ols_idx`,
+  surfaced as `Property::Tols(Tols { target_ols_idx })` (re-exported as
+  `oxideav_avif::Tols`). The field is the output layer set index to be
+  provided to the decoding process of the associated coded image item;
+  per §6.5.29.3 its precise interpretation is coding-format specific,
+  so it is surfaced verbatim. `tols` is the one descriptive §6.5.x
+  property the spec *requires* to be essential (§6.5.29.1 `essential
+  shall be equal to 1`); because the parser surfaces a typed value, a
+  `tols` association does not trip
+  `Meta::unsupported_essential_properties`. Forward-compat behaviour
+  matches the rest of the FullBox-headed property parsers — unknown
+  `version` rejected, body shorter than the two-byte field rejected,
+  trailing bytes ignored. +8 unit tests (lib 444, standalone 429).
+- ISO/IEC 23008-12 §6.5.27 PanoramaProperty (`pano`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.27.2 — a FullBox(`pano`, version=0, flags=0) followed by an
+  `unsigned int(8) panorama_direction` and, **only** when the
+  direction signals one of the two grid panorama types (`4` raster
+  scan / `5` continuous order), an `unsigned int(8) rows_minus_one` +
+  `unsigned int(8) columns_minus_one` pair — i.e. the first
+  conditionally-sized property body in the §6.5.x rollout, surfaced
+  as `Pano::grid: Option<PanoGrid>` being `Some` exactly for the two
+  grid directions. Per §6.5.27.1 the property is descriptive with
+  `Quantity (per item): At most one` and `should` only be associated
+  with a `'pano'` entity group (§6.8.8.1), whose entities are listed
+  in increasing panorama order — the new
+  `EntityGroup::is_panorama()` helper classifies that grouping type
+  alongside the existing `altr` / `ster` / `eqiv` recognisers. The
+  six §6.5.27.3 direction values are exposed as `Pano::DIRECTION_*`
+  constants plus `is_defined_direction()` / `is_grid()` projections;
+  an undefined direction (`>= 6`, "other values are undefined") is
+  preserved verbatim rather than rejected so readers can skip the
+  panorama reconstruction without losing the rest of the file. The
+  `PanoGrid::{rows, columns}` projections add the §6.5.27.3
+  minus-one back with a `u16` widening so the `255` wire endpoint
+  reads as `256` instead of wrapping. A recognised `pano` property
+  does not trip `Meta::unsupported_essential_properties` even when
+  flagged essential, joining the always-honoured list. New
+  re-exports: `oxideav_avif::{Pano, PanoGrid}`.
+
+- ISO/IEC 23008-12 §6.5.26 DepthOfFieldProperty (`dobr`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.26.2 — a FullBox(`dobr`, version=0, flags=0) followed by an
+  `int(8) f_stop_numerator` and an `int(8) f_stop_denominator`, both
+  **signed** per the spec text. Per §6.5.26.1 the property is
+  descriptive with `Quantity (per item): At most one` and identifies
+  the depth-of-field variation applied to the associated image item
+  relative to the camera settings — used to place a frame inside a
+  depth-of-field-bracketed burst via the §6.8.6 `'dobr'` entity
+  group. Per §6.5.26.3 the variation is expressed as an aperture
+  change in a number of stops, computed as `f_stop_numerator /
+  f_stop_denominator`. The wire layout is structurally identical to
+  the §6.5.25 `afbr` flash-exposure sibling (two signed `int(8)`
+  ratio fields); like `afbr`, §6.5.26 does NOT carve out a dedicated
+  sentinel for a zero denominator — a zero denominator is
+  mathematically undefined and the `Dobr::aperture_stops` projection
+  returns `None` in that case. The `i8::MIN / -1` corner — which
+  would overflow an integer-only divide — round-trips as `128.0` via
+  the explicit `f64::from` widening, ruling out an arithmetic panic.
+  A recognised `dobr` property does not trip
+  `Meta::unsupported_essential_properties` even when flagged
+  essential, joining the always-honoured list. New re-export:
+  `oxideav_avif::Dobr`.
+
+- ISO/IEC 23008-12 §6.5.25 FlashExposureProperty (`afbr`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.25.2 — a FullBox(`afbr`, version=0, flags=0) followed by an
+  `int(8) flash_exposure_numerator` and an `int(8)
+  flash_exposure_denominator`, both **signed** per the spec text.
+  Per §6.5.25.1 the property is descriptive with `Quantity (per
+  item): At most one` and identifies the flash exposure variation
+  applied to the associated image item relative to the camera
+  settings — used to place a frame inside a flash-bracketed burst
+  via the §6.8.6 `'afbr'` entity group. Per §6.5.25.3 the flash
+  exposure value of the sample is expressed in **number of
+  f-stops** as the ratio `flash_exposure_numerator /
+  flash_exposure_denominator`. Unlike `fobr`'s §6.5.24.3
+  divide-by-zero infinity sentinel, §6.5.25 does NOT carve out a
+  dedicated sentinel for a zero denominator — a zero denominator
+  is mathematically undefined and the `Afbr::flash_exposure_stops`
+  projection returns `None` in that case (mirroring `aebr` /
+  `Aebr::exposure_stops` on the reserved zero step). The
+  `i8::MIN / -1` corner — which would overflow an integer-only
+  divide — round-trips as `128.0` via the explicit `f64::from`
+  widening so an arithmetic panic is impossible. Both bytes are
+  reinterpreted as `i8` so a writer that produces `-1` (`0xFF`)
+  for the smallest dark direction round-trips to `-1`, not `255`.
+  Lands as a new `Property::Afbr(Afbr)` variant dispatched through
+  `parse_ipco` alongside the other recognised properties. The
+  parser rejects unknown `version` values (per the spec's
+  `version = 0` declaration in the syntax block) so a future-version
+  layout cannot be misread as v0, rejects a body shorter than the
+  two-byte fixed tail so a truncated `afbr` cannot be partially
+  read (the truncation check covers a header-only buffer and a
+  header + the numerator alone), and tolerates trailing bytes past
+  the two fields for forward-compatibility with future spec
+  revisions that append new fields under the same `version=0` slot
+  (mirrors the behaviour of every other FullBox-headed property
+  parser in this module). A recognised `afbr` property — even when
+  unusually flagged essential in the `ipma` association — does not
+  trip `Meta::unsupported_essential_properties`. Coverage: +9 unit
+  (`afbr_round_trip_reads_numerator_then_denominator` with
+  distinct values per field that would catch a cross-wire,
+  `afbr_fields_are_signed` walking single-sign-negative
+  (`-1/2` and `1/-2`), double-sign-negative (`-1/-2`), the
+  `i8::MIN` / `i8::MAX` endpoints, and a raw `0xFF` byte that
+  must read as `-1`, `afbr_flash_exposure_stops_projection`
+  walking the `+0.5` half-stop over, `-0.5` half-stop under,
+  `+1.0` full-stop over, `-2/3` two-third-stop under,
+  `i8::MIN / -1 = +128` widening endpoint, zero-denominator
+  undefined reading, zero-numerator `0/N` zero-stops reading, and
+  `0/0` undefined reading, `afbr_rejects_unknown_version`,
+  `afbr_rejects_truncated_body` walking both truncation offsets
+  (header-only and header + numerator only),
+  `afbr_tolerates_trailing_bytes` exercising the forward-compat
+  slack, `afbr_dispatched_through_parse_ipco` proving the
+  wbbr/aebr/etc. dispatch table also routes `afbr`,
+  `afbr_essential_association_is_recognised` proving the essential
+  bit does not surface as unsupported, and
+  `afbr_lookup_via_property_for` exercising the typical end-to-end
+  `Meta::property_for` shape for a well-formed `+0.5`-stop
+  reading, a `-0.75`-stop negative-bracket reading, and the
+  zero-denominator undefined reading). Re-exports `Afbr` from the
+  crate root next to `Fobr`. Brings the §6.5.x typed-property
+  coverage to every descriptive property from §6.5.4 through
+  §6.5.25; §6.5.26 (`dobr`) / §6.5.27+ remain.
+
+- ISO/IEC 23008-12 §6.5.24 FocusProperty (`fobr`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.24.2 — a FullBox(`fobr`, version=0, flags=0) followed by an
+  `unsigned int(16) focus_distance_numerator` and an
+  `unsigned int(16) focus_distance_denominator`, both big-endian per
+  ISO/IEC 14496-12 §4.2. Per §6.5.24.1 the property is descriptive
+  with `Quantity (per item): At most one` and identifies the focus
+  variation applied to the associated image item relative to the
+  camera settings — used to place a frame inside a focus-bracketed
+  burst via the §6.8.6 `'fobr'` entity group. Per §6.5.24.3 the
+  focus distance in metres is the ratio
+  `focus_distance_numerator / focus_distance_denominator`; the spec
+  carves out a sentinel for **focus at infinity** that is signalled
+  by **division by zero** (`focus_distance_denominator == 0`, with
+  the numerator `should` also be zero per the same paragraph). The
+  parser surfaces the raw fields and exposes
+  `Fobr::INFINITY_DENOMINATOR` (associated constant set to `0`),
+  `Fobr::is_focus_at_infinity` (predicate on the denominator,
+  matching the spec's `i.e.` clause), and
+  `Fobr::has_well_formed_infinity_sentinel` (stricter predicate
+  requiring BOTH fields zero, distinguishing a writer that
+  honoured the §6.5.24.3 `should` from a denominator-only zero that
+  still reads as infinity but violates the writer recommendation).
+  The `Fobr::focus_distance_metres` projection returns
+  `Some(num / den)` for well-formed denominators and `None` for the
+  infinity sentinel, so callers don't re-derive the division-by-zero
+  check. Lands as a new `Property::Fobr(Fobr)` variant dispatched
+  through `parse_ipco` alongside the other recognised properties.
+  The parser rejects unknown `version` values (per the spec's
+  `version = 0` declaration in the syntax block) so a future-version
+  layout cannot be misread as v0, rejects a body shorter than the
+  four-byte fixed tail so a truncated `fobr` cannot be partially
+  read (the truncation check covers a header-only buffer, a header +
+  the numerator alone, and a header + numerator + only one byte of
+  the denominator), and tolerates trailing bytes past the four
+  fields for forward-compatibility with future spec revisions that
+  append new fields under the same `version=0` slot (mirrors the
+  behaviour of every other FullBox-headed property parser in this
+  module). A recognised `fobr` property — even when unusually
+  flagged essential in the `ipma` association — does not trip
+  `Meta::unsupported_essential_properties`. Coverage: +11 unit
+  (`fobr_round_trip_reads_numerator_then_denominator` with distinct
+  values per field that would catch a cross-wire,
+  `fobr_fields_are_big_endian` pinning the ISO/IEC 14496-12 §4.2
+  byte order on `0x0125`/`0x0008` plus the `u16::MAX` / `0`
+  endpoints, `fobr_focus_distance_metres_projection` walking the
+  1.7 m portrait reading, the 1.0 m unit reading, the 0.05 m macro
+  reading, the `u16::MAX / 1` representable extreme, and both the
+  strict (`0/0`) and lenient (`42/0`) infinity sentinels,
+  `fobr_is_focus_at_infinity_predicate` covering both spec sentinel
+  shapes plus a wide non-infinity sweep,
+  `fobr_well_formed_infinity_sentinel_predicate` separating the
+  strict and lenient infinity readings plus the `0/N` (zero metres,
+  not infinity) edge, `fobr_rejects_unknown_version`,
+  `fobr_rejects_truncated_body` walking all three truncation
+  offsets, `fobr_tolerates_trailing_bytes` exercising the
+  forward-compat slack, `fobr_dispatched_through_parse_ipco`
+  proving the wbbr/aebr/etc. dispatch table also routes `fobr`,
+  `fobr_essential_association_is_recognised` proving the essential
+  bit does not surface as unsupported, and
+  `fobr_lookup_via_property_for` exercising the typical end-to-end
+  `Meta::property_for` shape for both a well-formed reading and the
+  strict infinity sentinel). Re-exports `Fobr` from the crate root
+  next to `Wbbr`. Brings the §6.5.x typed-property coverage to
+  every descriptive property from §6.5.4 through §6.5.24; §6.5.25
+  (`afbr`) / §6.5.26 (`dobr`) / §6.5.27+ remain.
+
+- ISO/IEC 23008-12 §6.5.23 WhiteBalanceProperty (`wbbr`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.23.2 — a FullBox(`wbbr`, version=0, flags=0) followed by an
+  `unsigned int(16) blue_amber` (colour-temperature component in
+  Kelvin, big-endian per ISO/IEC 14496-12 §4.2) and a signed
+  `int(8) green_magenta` (colour-deviation component in 1/100 Duv).
+  Per §6.5.23.1 the property is descriptive with `Quantity (per
+  item): At most one` and identifies the white-balance compensation
+  applied to the associated image item relative to the camera
+  settings. The §6.5.23.3 NOTE describes `green_magenta == 0` as a
+  neutral light source, with negative values carrying a magenta
+  colour shift and positive values carrying a green colour shift.
+  The parser surfaces the raw fields and exposes the neutral
+  sentinel via the `Wbbr::NEUTRAL_GREEN_MAGENTA` associated
+  constant plus a `Wbbr::is_green_magenta_neutral` predicate, and
+  the Duv-unit projection via `Wbbr::green_magenta_duv` returning
+  `green_magenta / 100.0` (a `-50` round-trips to `-0.5` Duv
+  magenta, a `+50` to `+0.5` Duv green) so callers don't re-derive
+  the unit conversion. The `green_magenta` byte is reinterpreted as
+  `i8` so a writer that produces `-1` (`0xFF`) for the smallest
+  magenta shift round-trips to `-1`, not `255`. Lands as a new
+  `Property::Wbbr(Wbbr)` variant dispatched through `parse_ipco`
+  alongside the other recognised properties. The parser rejects
+  unknown `version` values (per the spec's `version = 0`
+  declaration in the syntax block) so a future-version layout
+  cannot be misread as v0, rejects a body shorter than the
+  three-byte fixed tail so a truncated `wbbr` cannot be partially
+  read (the truncation check covers a header-only buffer, a header
+  + a single byte of `blue_amber`, and a header + a complete
+  `blue_amber` but missing `green_magenta`), and tolerates
+  trailing bytes past the three fields for forward-compatibility
+  with future spec revisions that append new fields under the same
+  `version=0` slot (mirrors the behaviour of every other
+  FullBox-headed property parser in this module). A recognised
+  `wbbr` property — even when unusually flagged essential in the
+  `ipma` association — does not trip
+  `Meta::unsupported_essential_properties`. Coverage: +11 unit
+  (`wbbr_round_trip_reads_blue_amber_then_green_magenta` with
+  distinct values per field that would catch a cross-wire,
+  `wbbr_blue_amber_is_big_endian` pinning the ISO/IEC 14496-12 §4.2
+  byte order on `0x15B0` plus the `u16::MAX` / `0` endpoints,
+  `wbbr_signed_green_magenta_reinterpretation` proving the `i8`
+  cast survives the `-1` → `0xFF` round-trip plus the `i8::MIN` /
+  `i8::MAX` endpoints, `wbbr_green_magenta_duv_projection`
+  exercising the `±0.5` Duv shapes plus the neutral sentinel plus
+  the `i8::MIN` wire-extreme, `wbbr_green_magenta_neutral_predicate`
+  walking the zero sentinel across multiple `blue_amber` readings +
+  every non-zero value including the `i8` endpoints,
+  `wbbr_rejects_unknown_version`, `wbbr_rejects_truncated_body`
+  covering all three truncation shapes (header-only, header +
+  1-byte, header + 2-byte), `wbbr_tolerates_trailing_bytes`
+  proving forward-compat tail behaviour,
+  `wbbr_dispatched_through_parse_ipco`,
+  `wbbr_essential_association_is_recognised`, and
+  `wbbr_lookup_via_property_for` proving the end-to-end
+  `Meta::property_for(item_id, &WBBR)` lookup including
+  `green_magenta_duv` evaluation on the found instance). Default
+  lib 396 (was 385); standalone lib 381 (was 370); integration 61
+  + 1 ignored unchanged. Re-exports add `Wbbr`. Spec: ISO/IEC
+  23008-12:2025 §6.5.23.
+
+- ISO/IEC 23008-12 §6.5.22 AutoExposureProperty (`aebr`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.22.2 — a FullBox(`aebr`, version=0, flags=0) followed by two
+  signed `int(8)` fields: `exposure_step` then `exposure_numerator`.
+  Per §6.5.22.1 the property is descriptive with `Quantity (per item):
+  At most one` and identifies the exposure variation, in number of
+  stops, applied by an auto-exposure-bracketing routine relative to
+  the camera settings. The bracketing increment is enumerated in
+  §6.5.22.3 (`1` = full stop, `2` = half, `3` = third, `4` = quarter);
+  every other value is reserved. The parser surfaces the raw byte and
+  exposes the enumeration check via four `Aebr::STEP_*` associated
+  constants plus an `Aebr::is_defined_step` predicate so a strict
+  reader can route on the §6.5.22.3 enumeration without re-deriving
+  the table at the call site. The exposure offset formula
+  (`exposure_numerator / exposure_step`) is exposed via
+  `Aebr::exposure_stops` returning `Option<f64>`: `Some(f)` for any
+  non-zero step (including reserved values, so a caller wanting the
+  defined-only path gates on `is_defined_step` first), and `None`
+  for the reserved zero step that would divide by zero. Both wire
+  fields are signed `int(8)`; the parser reinterprets the byte as
+  `i8` so a negative `exposure_numerator` (darker-than-camera bracket
+  position) round-trips correctly rather than wrapping to `255`.
+  Lands as a new `Property::Aebr(Aebr)` variant dispatched through
+  `parse_ipco` alongside the other recognised properties. The parser
+  rejects unknown `version` values (per the spec's `version = 0`
+  declaration in the syntax block) so a future-version layout cannot
+  be misread as v0, rejects a body shorter than the two-byte fixed
+  tail so a truncated `aebr` cannot be partially read, and tolerates
+  trailing bytes past the two fields for forward-compatibility with
+  future spec revisions that append new fields under the same
+  `version=0` slot (mirrors the behaviour of every other
+  FullBox-headed property parser in this module). A recognised
+  `aebr` property — even when unusually flagged essential in the
+  `ipma` association — does not trip
+  `Meta::unsupported_essential_properties`. Coverage: +10 unit
+  (`aebr_round_trip_reads_step_then_numerator` with distinct values
+  per field that would catch a cross-wire,
+  `aebr_defined_step_enumeration` exhaustively walking the four
+  defined values + a representative reserved set including the
+  signed-range endpoints, `aebr_exposure_stops_matches_spec_ratio`
+  exercising the four defined steps with negative and positive
+  numerators and pinning the zero-step `None` shape,
+  `aebr_signed_byte_reinterpretation` proving the i8 cast survives
+  the `-1` → `0xFF` round-trip on both fields plus the i8 min/max
+  endpoints, `aebr_rejects_unknown_version`,
+  `aebr_rejects_truncated_body` covering both a header-only buffer
+  and a header + one-byte-only shape, `aebr_tolerates_trailing_bytes`
+  proving forward-compat tail behaviour,
+  `aebr_dispatched_through_parse_ipco`,
+  `aebr_essential_association_is_recognised`, and
+  `aebr_lookup_via_property_for` proving the end-to-end
+  `Meta::property_for(item_id, &AEBR)` lookup including
+  `exposure_stops` evaluation on the found instance). Default lib
+  385 (was 375); standalone lib 370 (was 360); integration 61 + 1
+  ignored unchanged. Re-exports add `Aebr`. Spec: ISO/IEC
+  23008-12:2025 §6.5.22.
+
+- ISO/IEC 23008-12 §6.5.21 AccessibilityTextProperty (`altt`) descriptive
+  item-property parser. The body shape is taken verbatim from §6.5.21.2 —
+  a FullBox(`altt`, version=0, flags=0) followed by two sequential
+  null-terminated UTF-8 strings: `alt_text` then `alt_lang`. The
+  field order is reversed relative to §6.5.20 `udes` (which puts
+  `lang` first), so the parser pins the §6.5.21.2 declaration order
+  explicitly. Per §6.5.21.3 an empty `alt_lang` is the
+  unknown/undefined sentinel; the parser preserves the raw empty
+  string and surfaces a strongly typed projection via two `*_opt`
+  helpers (`Altt::{alt_text_opt, alt_lang_opt}`) returning `None` for
+  the empty case. Lands as a new `Property::Altt(Altt)` variant
+  dispatched through `parse_ipco` alongside the other recognised
+  properties. The parser rejects unknown `version` values (per the
+  spec's `version = 0` declaration in the syntax block) so a
+  future-version layout cannot be misread as v0, rejects a body that
+  runs out before the second NUL terminator has been observed, and
+  tolerates trailing bytes past the second terminator for
+  forward-compatibility with future spec revisions that append new
+  fields under the same `version=0` slot (mirrors the §8.11.6 `infe`
+  tail-field behaviour). A recognised `altt` property — even when
+  flagged essential in the `ipma` association — does not trip
+  `Meta::unsupported_essential_properties`. Per §6.5.21.1
+  `Quantity: Zero or more`, multiple `altt` instances may coexist on
+  the same item carrying different language codes; the dispatch
+  returns every instance in insertion order so the caller can pick
+  the most appropriate. Coverage: +10 unit
+  (`altt_round_trip_reads_text_then_lang` with distinct values per
+  field that would catch a cross-wire,
+  `altt_empty_strings_are_preserved_and_projectable_to_none` covering
+  the §6.5.21.3 sentinel form, `altt_opt_helpers_round_trip_non_empty`,
+  `altt_preserves_utf8_multibyte` round-tripping CJK + accented Latin
+  payloads, `altt_rejects_unknown_version`,
+  `altt_rejects_truncated_body`, `altt_tolerates_trailing_bytes`
+  proving forward-compat tail behaviour,
+  `altt_dispatched_through_parse_ipco`,
+  `altt_essential_association_is_recognised`,
+  `altt_multiple_languages_coexist_on_same_item` proving the
+  §6.5.21.1 zero-or-more quantity round-trip, and
+  `altt_field_order_is_text_then_lang_not_reversed` pinning the
+  reversed-from-`udes` declaration order against a future copy-paste
+  regression). Default lib 375 (was 364); standalone lib 360 (was
+  349); integration 61 + 1 ignored unchanged. Re-exports add `Altt`.
+  Spec: ISO/IEC 23008-12:2025 §6.5.21.
+
+- ISO/IEC 23008-12 §6.5.20 UserDescriptionProperty (`udes`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.20.2 — a FullBox(`udes`, version=0, flags=0) followed by four
+  sequential null-terminated UTF-8 strings: `lang`, `name`,
+  `description`, `tags`. Per §6.5.20.3 each field's empty-string form
+  is the documented "absent" sentinel; the parser preserves the raw
+  empty string and surfaces a strongly typed projection via four
+  `*_opt` helpers (`Udes::{lang_opt, name_opt, description_opt,
+  tags_opt}`) returning `None` for the empty case, plus a derived
+  `Udes::tag_list` view that splits the `tags` field on `','`, trims
+  whitespace per segment, and filters out blank-only segments so a
+  caller iterating the result gets a clean tag list. Lands as a new
+  `Property::Udes(Udes)` variant dispatched through `parse_ipco`
+  alongside the other recognised properties. The parser rejects
+  unknown `version` values (per the spec's `version = 0` declaration
+  in the syntax block) so a future-version layout cannot be misread
+  as v0, rejects a body that runs out before the fourth NUL
+  terminator has been observed, and tolerates trailing bytes past
+  the fourth terminator for forward-compatibility with future spec
+  revisions that append new fields under the same `version=0` slot
+  (mirrors the §8.11.6 `infe` tail-field behaviour). A recognised
+  `udes` property — even when unusually flagged essential in the
+  `ipma` association — does not trip
+  `Meta::unsupported_essential_properties`. Per §6.5.20.1
+  `Quantity: Zero or more`, multiple `udes` instances may coexist on
+  the same item carrying different language codes; the dispatch
+  returns every instance in insertion order so the caller can pick
+  the most appropriate. Coverage: +11 unit
+  (`udes_round_trip_reads_all_four_fields` with distinct values per
+  field that would catch a cross-wire,
+  `udes_empty_strings_are_preserved_and_projectable_to_none` covering
+  the §6.5.20.3 sentinel form, `udes_opt_helpers_round_trip_non_empty`,
+  `udes_tag_list_splits_and_trims` exercising blank-segment /
+  extra-whitespace handling, `udes_preserves_utf8_multibyte`
+  round-tripping CJK + accented Latin payloads,
+  `udes_rejects_unknown_version`, `udes_rejects_truncated_body`,
+  `udes_tolerates_trailing_bytes` proving forward-compat tail
+  behaviour, `udes_dispatched_through_parse_ipco`,
+  `udes_essential_association_is_recognised`, and
+  `udes_multiple_languages_coexist_on_same_item` proving the §6.5.20.1
+  zero-or-more quantity round-trip). Default lib 364 (was 353);
+  standalone lib 349 (was 338); integration 61 + 1 ignored unchanged.
+  Re-exports add `Udes`. Spec: ISO/IEC 23008-12:2025 §6.5.20.
+
+- ISO/IEC 23008-12 §6.5.19 ModificationTimeProperty (`mdft`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.19.2 — a FullBox(`mdft`, version=0, flags=0) carrying a single
+  `unsigned int(64) modification_time` field; the unit is microseconds
+  since midnight, Jan. 1, 1904 UTC per §6.5.19.3, identical to the
+  `crtt` creation-time epoch / unit. Lands as a new
+  `Property::Mdft(Mdft)` variant dispatched through `parse_ipco`
+  alongside the other recognised properties. Helpers:
+  `Mdft::seconds_since_unix_epoch` converts the 1904-epoch
+  microsecond field to whole seconds since the Unix epoch
+  (1970-01-01 UTC), returning `None` for a pre-1970 timestamp;
+  `Mdft::subsecond_micros` exposes the residual `0..1_000_000` µs
+  remainder. Both helpers mirror the existing `Crtt` shape exactly
+  and reuse the module-level `HEIF_EPOCH_TO_UNIX_EPOCH_SECONDS`
+  constant (`2_082_844_800`) introduced for `crtt`. The parser
+  rejects unknown `version` values (per the spec's `version = 0`
+  declaration in the syntax block) so a future-version layout cannot
+  be misread as v0, and a body shorter than the 8-byte
+  `modification_time` field is rejected rather than silently
+  zero-extended. A recognised `mdft` property — even when unusually
+  flagged essential in the `ipma` association — does not trip
+  `Meta::unsupported_essential_properties`. `mdft` and `crtt` may
+  legally co-occur on the same item; the dispatch returns both
+  properties in insertion order and `Meta::property_for` resolves
+  each kind independently to yield a creation/modification time
+  pair. Coverage: +9 unit (round-trip read of the u64 field with a
+  distinct sentinel that would catch a `crtt` cross-wire,
+  truncated-body / unknown-version / missing-payload rejection
+  paths, `ipco` dispatch, `seconds_since_unix_epoch` matching the
+  documented 1904↔1970 offset including the pre-epoch underflow
+  branch, `subsecond_micros` isolating the residual at both ends of
+  the legal range, essential-association recognition, and
+  `crtt`+`mdft` coexistence on a single item). Default lib 353 (was
+  344); standalone lib 338 (was 329); integration 61 + 1 ignored
+  unchanged. Re-exports add `Mdft`. Spec: ISO/IEC 23008-12:2025
+  §6.5.19.
+
+- ISO/IEC 23008-12 §6.5.18 CreationTimeProperty (`crtt`) descriptive
+  item-property parser. The body shape is taken verbatim from
+  §6.5.18.2 — a FullBox(`crtt`, version=0, flags=0) carrying a single
+  `unsigned int(64) creation_time` field; the unit is microseconds
+  since midnight, Jan. 1, 1904 UTC per §6.5.18.3. Lands as a new
+  `Property::Crtt(Crtt)` variant dispatched through `parse_ipco`
+  alongside the other recognised properties. Helpers:
+  `Crtt::seconds_since_unix_epoch` converts the 1904-epoch
+  microsecond field to whole seconds since the Unix epoch
+  (1970-01-01 UTC), returning `None` for a pre-1970 timestamp
+  (the `u64` field cannot represent a signed offset);
+  `Crtt::subsecond_micros` exposes the residual `0..1_000_000` µs
+  remainder so callers can reconstruct full-resolution time. The
+  1904→1970 offset is `2_082_844_800` seconds (66 years × 365 days +
+  17 leap-year days × 86 400 s/day), captured as a single
+  module-level constant. The parser rejects unknown `version` values
+  (per the spec's `version = 0` declaration in the syntax block) so
+  a future-version layout cannot be misread as v0, and a body
+  shorter than the 8-byte `creation_time` field is rejected rather
+  than silently zero-extended. A recognised `crtt` property — even
+  when unusually flagged essential in the `ipma` association — does
+  not trip `Meta::unsupported_essential_properties`. Coverage: +8
+  unit (round-trip read of the u64 field, truncated-body /
+  unknown-version / missing-payload rejection paths, ipco dispatch,
+  `seconds_since_unix_epoch` matching the documented 1904↔1970
+  offset including the pre-epoch underflow branch,
+  `subsecond_micros` isolating the residual at both ends of the
+  legal range, essential-association recognition). Default lib 344
+  (was 336); standalone lib 329 (was 321); integration 61 + 1
+  ignored unchanged. Re-exports: `oxideav_avif::Crtt`.
+
+- ISO/IEC 23008-12 §6.5.13 ImageScaling (`iscl`) + §6.5.17
+  RequiredReferenceTypesProperty (`rref`) item-property parsers + §7
+  grid-derivation audit extension. The two property bodies join the
+  existing typed-property dispatch in `parse_ipco`:
+  `Property::Iscl(Iscl)` holds the four §6.5.13.2 `unsigned int(16)`
+  ratio fields (`target_width_numerator`, `target_width_denominator`,
+  `target_height_numerator`, `target_height_denominator`);
+  `Property::Rref(Rref)` holds the §6.5.17.2 list as a typed
+  `Vec<BoxType>` (each `reference_type[i]` is a u32 four-CC). Helpers:
+  `Iscl::is_well_formed` exposes the §6.5.13.3 non-zero-everywhere
+  `shall` (separated from the parse-time check so a malformed file
+  still decodes structurally); `Iscl::scaled_dims(input_width,
+  input_height)` folds the §6.5.13.1 formula
+  `ceil((input * numerator) / denominator)` in u64 with saturating
+  conversion back to u32 (returns `None` when either denominator is
+  zero); `Rref::count` mirrors `reference_types.len()`;
+  `Rref::requires(four_cc)` is a one-call membership check. Both
+  parsers reject unknown `version` values (per the spec's
+  `version = 0` declaration). The av1-avif §7 grid-derivation audit
+  was extended to flag `iscl` as a transformative property on `dimg`
+  input tiles (HEIF §6.5.13 explicitly classifies it as
+  transformative); `rref` is descriptive and is **not** flagged.
+  Recognised `iscl` and `rref` essential associations no longer trip
+  `Meta::unsupported_essential_properties`. Coverage: +18 unit (iscl
+  round-trip, truncated-body / unknown-version / zero-field-per-axis
+  rejection paths, scaled_dims with three ratio shapes including
+  identity, zero-denominator short-circuit, u32-overflow saturation,
+  ipco dispatch; rref round-trip with three typed four-CCs, empty
+  list, truncated-table / unknown-version / missing-count rejection,
+  ipco dispatch; essential-association recognition for both kinds;
+  §7 audit flagging an iscl on a tile, NOT flagging an rref on a
+  tile, NOT flagging an iscl on the grid item itself). The
+  pre-existing `tile_with_all_three_kinds` audit test widened to
+  `tile_with_all_four_kinds` to cover the new `iscl` kind without
+  losing the original three-kind shape. Re-exports:
+  `oxideav_avif::{Iscl, Rref}`. Resolves the r172 follow-up "HEIF
+  defines additional transformative properties (`'iscl'` image
+  scaling, `'rref'` required reference) the audit doesn't yet flag".
+
+- ISO/IEC 14496-12 §8.4.2.2 `mdhd` media-timescale plumb. `AvisMeta`
+  grows one field — `media_timescale: Option<u32>` — populated by
+  `parse_avis` from the first track's `mdia/mdhd` (the FullBox's
+  v0 32-bit / v1 32-bit timescale field at body offset 8 / 16).
+  `AvisInfo` exposes the same `media_timescale` field; both report
+  `None` when the box is missing, truncated, or its declared
+  `version` is neither 0 nor 1 (forward-compatible silence).
+  Two new helpers consume the field: `EditListEntry::media_time_seconds(media_timescale)`
+  divides `media_time` by the supplied media timescale (returns
+  `None` for the `media_time == -1` empty-edit sentinel or a zero
+  timescale); `EditListEntry::segment_duration_seconds(movie_timescale)`
+  is the parallel divide-by-`mvhd::timescale` helper for the
+  movie-timeline `segment_duration`. `AvisInfo::media_duration_seconds()`
+  computes `total_sample_duration / media_timescale` — the
+  spec-correct conversion for the accumulated `stts` per-sample
+  deltas (in media-timescale units per §8.6.1.2). Distinct from
+  the existing `duration_seconds()`, which divides by
+  `mvhd::timescale`. When `mvhd::timescale == mdhd::timescale`
+  (a common encoder default) the two helpers report the same
+  number; when they differ this helper is the spec-correct one.
+  Resolves the r212 / r218 follow-up ("plumbing `mdhd` is still on
+  the table — today `media_time` is in raw media-timescale units
+  and `total_sample_duration` is in movie-timescale units"; this
+  round corrects the second half of that statement — both
+  `total_sample_duration` and `media_time` are in media-timescale
+  units per §8.6.1.2, and `media_duration_seconds` reflects that).
+  Coverage: +14 unit (mdhd v0/v1 timescale read, absent `mdhd`,
+  truncated v0 body, unknown version, `media_time_seconds` normal
+  / empty / zero-timescale paths, `segment_duration_seconds`
+  normal / zero-timescale paths, `AvisInfo::media_timescale`
+  carry-through, `media_duration_seconds` differs from
+  `duration_seconds` when timescales diverge, zero
+  media-timescale undefined). +1 integration
+  (`inspect_avis_resolves_media_timescale_for_alpha_video_fixture`)
+  pins the resolved field on the real Netflix `alpha_video.avif`.
+
+- AVIS aggregator `inspect_avis(file) -> AvisInfo` — the AVIS
+  counterpart to the still-image `inspect()` / `AvifInfo` one-call
+  builder. A single call walks `ftyp` + `moov` once and folds every
+  AVIS-side container audit into one record (`sequence_compliance`
+  for av1-avif §3, `profile_compliance` for §8.2 / §8.3,
+  `edit_list_compliance` for ISO/IEC 14496-12 §8.6.6.3) alongside
+  summary fields (`timescale`, `display_dims`, `sample_count`,
+  `total_sample_duration`, `has_av1_codec_config`, `handler`,
+  `sample_description_types`, `brands`, `has_edit_list`). Helpers:
+  `is_compliant_all()` (AND of every `shall` across the three audits,
+  trivially `true` when the file claims no AVIF profile brand),
+  `missing_all()` (deterministic concatenation of the three audits'
+  `missing()` lists in §3 → §8.2/§8.3 → §8.6.6.3 order),
+  `duration_seconds()` (`total_sample_duration / timescale`, `None`
+  when `timescale == 0`), `is_avis_brand()` (mirrors
+  `BrandClass::is_sequence`), `frame_count()` (mirrors
+  `sample_count`). The aggregator introduces no new normative
+  material — every audited rule is forwarded verbatim from the
+  existing per-audit walkers; the value is one-call ergonomics. Pins
+  on the real Netflix `alpha_video.avif` fixture
+  (`inspect_avis_aggregates_alpha_video_fixture_to_compliant`) end
+  to end. Coverage: +9 unit; +1 integration. Re-exports:
+  `oxideav_avif::{inspect_avis, AvisInfo}`. Resolves the repeated
+  r201 / r206 / r212 follow-up ("the AVIS path's `AvifInfo` does not
+  yet surface the audit the way `AvifInfo::avif_profile_compliance`
+  does for items").
+
+- ISO/IEC 14496-12 §8.6.6 AVIS edit list (`edts/elst`) parse +
+  §8.6.6.3 `shall`-level audit. `AvisMeta` grows one field —
+  `edit_list: Vec<EditListEntry>` — populated by `parse_avis` from
+  the first track's `trak/edts/elst`. v0 (32-bit `segment_duration`
+  / signed-32 `media_time`) and v1 (64-bit / signed-64) entries are
+  widened to the same `EditListEntry` shape so callers stay
+  version-agnostic; future-version (v2+) payloads silently produce
+  an empty entry list and a truncated entry table stops the walk at
+  the last well-formed entry (no error). `EditListEntry::is_empty_edit()`
+  flags the §8.6.6.3 sentinel `media_time == -1`;
+  `EditListEntry::is_dwell()` flags `media_rate_integer == 0`. The
+  new `audit_edit_list(&AvisMeta) -> EditListCompliance` audits both
+  §8.6.6.3 normative `shall`s: (a) the trailing entry shall not be
+  an empty edit and (b) every `media_rate_integer` shall be `0`
+  (dwell) or `1` (normal-rate). A track without `edts` (the §8.6.5
+  implicit-identity case) trivially passes both checks. Diagnostic
+  fields surface `entry_count`, `empty_edit_count`,
+  `dwell_entry_count`, and `out_of_range_rate_count`; `missing()`
+  emits `avis-edit-list-last-entry-empty` and/or
+  `avis-edit-list-media-rate-out-of-range`. Coverage: +14 unit
+  tests; default + standalone lib 281 → 295. Re-exports:
+  `oxideav_avif::{audit_edit_list, EditListCompliance,
+  EditListEntry}`.
+- av1-avif v1.2.0 §8.2 / §8.3 AVIS profile compliance audit
+  (`audit_avis_profile_compliance` + `AvisProfileCompliance`), the
+  sequence-track companion to round 195's still-image
+  `audit_avif_profile_compliance`. Reads only the AVIS track's
+  `AV1CodecConfigurationRecord` byte 1 (surfaced via
+  `AvisMeta::av1_codec_config`, packed as `seq_profile (3) |
+  seq_level_idx_0 (5)` per av1-isobmff §2.3); no AV1 OBU decode is
+  performed. One record per declared profile brand (Baseline before
+  Advanced); a file declaring neither `MA1B` nor `MA1A` short-circuits
+  to an empty vector. Compliance bounds: Baseline (`MA1B`) requires
+  AV1 Main Profile at level ≤ 5.1 (`seq_profile == 0 &&
+  seq_level_idx_0 <= 13`); Advanced (`MA1A`) requires ≤ AV1 High
+  Profile at level ≤ 6.0 (`seq_profile <= 1 && seq_level_idx_0 <=
+  16`). The level-31 "Maximum parameters" carve-out is out-of-range
+  for either profile (both clauses bound the level). Diagnostic
+  tokens are prefixed `avis-` to disambiguate from the still-image
+  audit (`avis-track-missing-av1C`, `avis-track-av1C-truncated`,
+  `avis-seq-profile-out-of-range`, `avis-seq-level-idx-out-of-range`).
+  Pinned end-to-end against the Netflix `alpha_video.avif` AVIS
+  fixture (which declares `MA1B` and satisfies §8.2). The
+  `decode_av1c_seq_profile` / `decode_av1c_seq_level_idx_0`
+  byte-1 helpers in `derived.rs` are now `pub(crate)` so the AVIS
+  audit can reuse them.
+- av1-avif v1.2.0 §3 AV1 Image Sequence compliance audit
+  (`audit_avis_sequence` + `AvisSequenceCompliance` + `HANDLER_PICT`).
+  Single record per file (one image-sequence track per AVIS) covers
+  three `shall`-level constraints: track `mdia/hdlr/handler_type`
+  equals `'pict'`; `stbl/stsd` carries exactly one SampleEntry of
+  type `'av01'`; every Sequence Header OBU surfaced across the
+  track's sample payloads is byte-identical to the others (vacuously
+  true for zero or one SH OBU). `AvisMeta` gains `handler:
+  Option<BoxType>` and `sample_description_types: Vec<BoxType>`
+  populated by `parse_avis`. The §3 SH-identity check walks AV1 OBU
+  framing per AV1 §5.3.1 / §5.3.2 / §4.10.5; out-of-range sample
+  payloads are counted via `samples_out_of_range` and skipped from
+  the identity check rather than flipping a `shall` token. Pinned
+  end-to-end against the Netflix `alpha_video.avif` AVIS fixture.
+- av1-avif v1.2.0 §8.2 / §8.3 AVIF profile compliance audit
+  (`audit_avif_profile_compliance` + `AvifProfileCompliance` +
+  `AvifProfile`). One record per `(AV1 Image Item, declared profile)`
+  pairing: Baseline (`MA1B`) requires AV1 Main Profile at level ≤ 5.1;
+  Advanced (`MA1A`) requires ≤ AV1 High Profile at level ≤ 6.0.
+  Surfaced through `AvifInfo::avif_profile_compliance` and
+  `AvifInfo::avif_profile_strict_compliant()`. Files declaring neither
+  brand skip the audit (returned vector is empty). Pinned end-to-end
+  against the Microsoft `monochrome.avif` (MA1B compliant), `red64.avif`
+  (MA1A compliant), and `bbb_alpha_inverted.avif` (MA1B compliant, two
+  `av01` items).
+
+### Changed
+
+- `CicpTriple::is_libavif_srgb_default` renamed to
+  `CicpTriple::is_sdr_srgb_bt601_default`. The triple it matches
+  (`(1, 13, 6)`) is the conventional 8-bit SDR sRGB shape for 4:2:0 /
+  4:2:2 inputs that any reference encoder defaults to; the new name is
+  spec-relative.
+
+### Other
+
+- Scrub decorative attributions to a specific reference AVIF
+  encoder / decoder family across `cicp.rs`, `meta.rs`, `inspect.rs`,
+  `tests/integration.rs`, `tests/fuzz_regressions.rs`, and `README.md`.
+  Replaced with spec-relative terminology (reference-encoder-produced,
+  BT.709/sRGB/BT.601 SDR triple, black-box oracle). No technical change.
+
+## [0.0.8](https://github.com/OxideAV/oxideav-avif/compare/v0.0.7...v0.0.8) - 2026-05-30
+
+### Other
+
+- gain_map_metadata one-call extractor for tmap descriptor body
+- refresh lib.rs crate-doc tmap line for the landed body parse
+- ISO 21496-1 gain map metadata (tmap descriptor body) parser
+- §2.1 Sequence Header OBU count shall-level compliance audit
+- §4.1 alpha-vs-master bit-depth shall-level compliance audit
+- §6.6.2.1 iden derived-image-item shall-level compliance audit
+- §7 grid-derivation transformative-property audit
+- tmap_item_ids docstring points at tone_map_compliance audit
+- tmap av1-avif §4.2.2 compliance audit (altr pairing + hidden gain map)
+- sato (Sample Transform) descriptor parser + evaluator (av1-avif §4.2.3)
+- a1op/a1lx layered-image properties + essential-property enforcement
+- local av1C parser + Av1Decoder stub after av1 clean-room rebuild
+- r81 docs: reflect revert + the av1 workspace caveat
+- keep AV1 calls on published 0.1.8 API for CI
+- derived-image + entity-grouping + MIAF compliance audit
+- HEIF item-properties + iref typed-relationship enumeration
+- harden AVIF→AV1 boundary against fuzz-discovered crashes
+- AVIS sequence decode + integration tests tolerate av1 coded_lossless
+
+### Added
+
+- Round 193 — `GainMapMetadata::parse` now enforces two additional
+  ISO 21496-1:2025 §5.2 `shall`-level constraints the round-188 parser
+  initially deferred:
+  - **§5.2.5.3** "For each component, `max(G)` shall be greater than
+    or equal to the `min(G)` value." Each channel's `gain_map_max`
+    and `gain_map_min` are now compared as exact rational values via
+    a cross-multiplied `i64` predicate, so a payload where the
+    per-component max is strictly below the per-component min is
+    rejected with `InvalidData`. The "greater than or equal to"
+    boundary is preserved — a channel where `max == min` is still
+    accepted (covered by a dedicated regression test).
+  - **§5.2.7** "`H_alternate` shall not be equal to `H_baseline`."
+    The baseline/alternate HDR headroom rationals are likewise
+    compared as values rather than bytes, so `1/1` and `2/2` (or
+    any other distinct (numerator, denominator) pairs that reduce
+    to the same value) trip the check. Rejected with `InvalidData`.
+  Two new private helpers (`rational_ge`, `rationals_differ`) wrap
+  the i64 cross-multiplication; both rely on the existing
+  denominator-non-zero invariant the reader enforces in
+  `read_signed_rational`. Five new tests cover the new failure
+  paths plus the `max == min` boundary and the value-equality (not
+  byte-equality) shape of §5.2.7. The pre-existing multichannel
+  fixture's `alternate_hdr_headroom` was nudged from `1/1` to `4/1`
+  to stay distinct from its `base_hdr_headroom`; no other test
+  fixture or public API surface changed. README's `tmap` row
+  refreshed to list the §5.2.5.3 + §5.2.7 enforcements alongside
+  the existing C.2.3 ones.
+- Round 190 — one-call gain map metadata extractor
+  `oxideav_avif::gain_map_metadata(file, tmap_item_id)`. Resolves the
+  named `'tmap'` derived-image item's `iloc` payload via the existing
+  `item_payload_bytes` path, then feeds the result to
+  `GainMapMetadata::parse`. Pick a `tmap_item_id` from
+  `AvifInfo::tmap_item_ids`; the function propagates the same
+  `InvalidData` / `Unsupported` error split as the parser. Mirrors the
+  `item_payload_bytes` accessor shape so callers can extract the parsed
+  descriptor in one call rather than chaining the two steps themselves.
+  Stale doc on `AvifInfo::tmap_item_ids` (previously claimed the
+  descriptor body parse was deferred) updated to point at this
+  extractor and at `GainMapMetadata::parse`.
+- Round 188 — ISO 21496-1:2025 Annex C.2 gain map metadata descriptor
+  body parser, the binary payload carried by the AVIF / HEIF `'tmap'`
+  (tone map) derived image item (av1-avif §4.2.2 registers the item;
+  ISO 21496-1 specifies its body). New API
+  `oxideav_avif::GainMapMetadata::parse(payload)` reads the big-endian
+  `GainMapVersion` (`minimum_version` / `writer_version`), the
+  `is_multichannel` (1 → 3 R/G/B channels, 0 → 1 channel) and
+  `use_base_colour_space` MSB-first flag bits, the base/alternate HDR
+  headroom rationals, and a `GainMapChannel` per channel (each carrying
+  the gain-map min/max, gamma, and base/alternate offset rationals).
+  Companion types `GainMapChannel` and `GainMapRational { numerator,
+  denominator, as_f64() }`. Every Annex C.2.3 `shall` is enforced:
+  rationals reject a `0` denominator, `gamma_numerator` must be
+  non-zero, and `writer_version` must be `>= minimum_version`; an
+  unrecognised `minimum_version` returns `Unsupported` (Annex C.2.3
+  directs the reader to display the base image rather than fail);
+  trailing padding or future-optional metadata after the recognised
+  fields is ignored per Annex C.2.1. This replaces the prior "HEIF
+  descriptor body parse deferred" caveat on the Tone Map row.
+- Round 182 — av1-avif v1.2.0 §2.1 "The AV1 Image Item Data shall have
+  exactly one Sequence Header OBU" container-layer compliance audit.
+  New API `oxideav_avif::derived::audit_sequence_header_obu(meta, file)`
+  enumerates every `'av01'` image item, resolves its payload via
+  `iloc`, walks the OBU framing per AV1 §5.3.1 / §5.3.2 (header byte
+  + leb128 `obu_size` per §4.10.5; optional one-byte extension header
+  when `obu_extension_flag == 1` per §5.3.3) and counts OBUs whose
+  `obu_type` equals `OBU_SEQUENCE_HEADER == 1` (per AV1 §6.2.1's
+  `obu_type` enumeration). One `SequenceHeaderObuAudit { item_id,
+  sequence_header_count, total_obu_count, missing_iloc, truncated_obu,
+  has_size_field_zero, is_compliant(), missing() }` record per av01
+  item, in `iinf` declaration order. The OBU payload bodies themselves
+  are not decoded — only the type field and framing are inspected.
+- `AvifInfo::sequence_header_obu_compliance:
+  Vec<crate::derived::SequenceHeaderObuAudit>` populated by both the
+  single-item and grid `build_info` paths, plus
+  `AvifInfo::sequence_header_obu_strict_compliant()` predicate folding
+  every record into a single boolean (trivially `true` when no av01
+  items are present — degenerate, since AVIF requires the primary
+  item be an av01 or a derivation rooted on av01s).
+- 14 new tests: 11 unit tests in `derived::tests` covering the happy
+  path (one SH OBU → compliant), §2.1 violations (zero SH OBUs flagged
+  `av01-item-missing-sequence-header-obu`; two SH OBUs flagged
+  `av01-item-multiple-sequence-header-obus`), structural failures
+  (truncated payload past declared `obu_size`, truncated leb128
+  mid-OBU, `obu_has_size_field == 0` chaining failure, missing iloc),
+  the extension-header skip path (`obu_extension_flag == 1`), one
+  record per av01 item ordering, and non-av01 item filtering; 3 unit
+  tests covering the `read_leb128` helper directly
+  (single/multi/maximum-width valid values, truncated continuation,
+  overlong 8-byte cap from AV1 §4.10.5). 2 new integration tests pin
+  the audit on real fixtures: `monochrome.avif` (one `'av01'` item, SH
+  count == 1, strict-compliant) and `bbb_alpha_inverted.avif` (two
+  `'av01'` items — colour primary + alpha auxiliary — each with SH
+  count == 1, strict-compliant).
+- `oxideav_avif::SequenceHeaderObuAudit` and
+  `oxideav_avif::audit_sequence_header_obu` re-exported at the crate
+  root. `build_info` signature extended with a trailing `file: &[u8]`
+  argument; `build_info_grid` reuses the `hdr.file` slice it already
+  carries.
+
+- Round 176 — av1-avif v1.2.0 §4.1 Auxiliary-Image bit-depth match
+  audit. The §4.1 `shall` "An AV1 Alpha Image Item (respectively an
+  AV1 Alpha Image Sequence) shall be encoded with the same bit depth
+  as the associated master AV1 Image Item (respectively AV1 Image
+  Sequence)" is now validated at the container layer via
+  `oxideav_avif::derived::audit_alpha_bit_depth(&Meta)`, returning one
+  `AlphaBitDepthAudit { alpha_item_id, master_item_id,
+  alpha_bit_depth, master_bit_depth, alpha_missing_av1c,
+  master_missing_av1c, is_compliant(), missing() }` record per
+  `(alpha, master)` pairing declared by an `'auxl'` iref whose source
+  carries an `'auxC'` URN starting with the alpha prefix
+  (`urn:mpeg:mpegB:cicp:systems:auxiliary:alpha`). A single alpha
+  attached to multiple masters emits one record per master in
+  `to_ids` order; iref entries are processed in declaration order.
+- Bit depth is decoded directly from each item's `av1C` flag byte
+  (`8`, `10`, or `12`) via a new private `decode_av1c_bit_depth`
+  helper. The audit also surfaces two §2.1 violations that would
+  defeat the §4.1 check: missing `av1C` association
+  (`{alpha,master}_missing_av1c`) and truncated `av1C` payload
+  (decoded depth is `None` with the missing flag still false).
+- `AvifInfo::alpha_bit_depth_compliance:
+  Vec<crate::derived::AlphaBitDepthAudit>` populated by both the
+  single-item and grid `build_info` paths, plus
+  `AvifInfo::alpha_bit_depth_strict_compliant()` predicate folding
+  every record into a single boolean (trivially `true` when no alpha
+  auxiliaries present, so combine with `has_alpha` for a presence +
+  compliance gate).
+- 10 new unit tests in `derived::tests` covering: matching 8-bit
+  pairing compliant; 10-bit master vs 8-bit alpha flagged with
+  `alpha-master-bit-depth-mismatch`; 12-bit pairing compliant; alpha
+  item missing `av1C`; master item missing `av1C`; truncated `av1C`
+  surfaces as `alpha-item-av1C-truncated` distinct from missing;
+  depth-map auxiliary (non-alpha URN) ignored; one alpha pointing at
+  multiple masters emits one record per pairing; empty audit list
+  when no alpha auxiliaries present; multiple distinct alpha
+  auxiliaries in one file each emit their own record in iref order.
+  `decode_av1c_bit_depth` separately covers 8/10/12 + truncation.
+  2 new integration tests pin the audit on real fixtures:
+  `monochrome_fixture_has_no_alpha_bit_depth_audit_records` confirms
+  the no-alpha vacuum on the Microsoft monochrome fixture, and
+  `bbb_alpha_fixture_alpha_master_bit_depth_match` confirms the
+  end-to-end §4.1 compliant shape on `bbb_alpha_inverted.avif`
+  (both alpha and master carry `av1C` and agree on bit depth).
+
+- Round 176 — HEIF v1.2.0 §6.6.2.1 Identity Derived Image Item
+  (`iden`) `shall`-level compliance audit. The HEIF §6.6.2.1
+  constraints ("derived image item shall have no item body" and
+  "`reference_count` for the `dimg` item reference of a `iden` derived
+  image item shall be equal to 1") together with the crosscutting
+  §6.6.1 `shall` ("number of `SingleItemTypeReferenceBoxes` with the
+  box type `dimg` and with the same value of `from_item_ID` shall not
+  be greater than 1") are now audited at the container layer via
+  `oxideav_avif::derived::audit_iden_derivations(&Meta)`. Returns one
+  `IdenCompliance { iden_item_id, dimg_reference_count,
+  dimg_iref_count, has_item_body, source_item_id, is_compliant(),
+  missing() }` record per `'iden'` item in `iinf` declaration order.
+- `AvifInfo::iden_item_ids` enumerates every `'iden'` carrier; the
+  paired `AvifInfo::iden_compliance: Vec<IdenCompliance>` reports the
+  per-item audit result, and `AvifInfo::iden_strict_compliant()`
+  folds the AND of every record (vacuously `true` when no iden items
+  exist).
+- Public re-exports of `audit_iden_derivations` and `IdenCompliance`
+  from the crate root, mirroring the existing `audit_tone_map` /
+  `audit_grid_derivations` access pattern.
+- Test delta: +9 unit tests in `derived::tests::audit_iden_*`
+  covering the happy path (no `iloc` entry); compliant zero-length
+  extent; non-empty body flagged; zero `dimg` inputs; two inputs in
+  one iref; multiple iref entries sharing the same `from_item_ID`;
+  empty audit list when no iden items; multi-iden iinf-ordering;
+  non-`dimg` irefs ignored. +1 integration
+  (`monochrome_fixture_has_no_iden_audit_records`) pins the
+  no-iden-item vacuum on the Microsoft monochrome conformance fixture.
+
+- Round 172 — av1-avif v1.2.0 §7 General-constraints
+  transformative-property audit for grid derivation chains. The §7
+  `shall` "Transformative properties shall not be associated with items
+  in a derivation chain that serves as an input to a grid derived image
+  item" is now validated at the container layer via
+  `oxideav_avif::derived::audit_grid_derivations(&Meta)`, returning one
+  `GridDerivationAudit { grid_item_id, tile_item_ids, offenders,
+  is_compliant(), offending_tile_ids() }` record per `'grid'` item in
+  `iinf` declaration order. Each record lists the offending
+  `(tile_item_id, property_kind)` pairs (transformative properties
+  recognised: `'clap'`, `'irot'`, `'imir'`) attached to any tile in the
+  grid's `'dimg'` derivation chain. Transformative properties on the
+  grid item itself are explicitly permitted by §7 and don't surface.
+- `AvifInfo::grid_derivation_compliance:
+  Vec<crate::derived::GridDerivationAudit>` populated by both the
+  single-item and grid `build_info` paths, plus
+  `AvifInfo::grid_derivations_strict_compliant()` predicate folding
+  every record into a single boolean (trivially `true` when no grid
+  items present, so combine with `is_grid` for a presence + compliance
+  gate).
+- 7 new unit tests in `derived::tests` covering: clean derivation chain
+  with grid-level `irot` (permitted by §7 — the audit must not flag the
+  grid item itself); single tile carrying `irot` flagged as an
+  offender; one tile carrying all three transformative kinds emits
+  three offender entries in stable `(clap, irot, imir)` order; two
+  tiles offending in different ways with the unique-tile-id list
+  collapsing duplicates; empty audit list when no grid items present;
+  multi-grid file producing one record per grid in `iinf` order; grid
+  without a `dimg` iref is vacuously compliant. 2 new integration tests
+  pin the audit end-to-end: `synthetic_4x1_strip_passes_grid_
+  derivation_audit` confirms the 4-tile-clean shape through `inspect`,
+  and `monochrome_fixture_has_no_grid_derivation_audit_records` pins
+  the no-grid-item shape on the Microsoft monochrome conformance
+  fixture.
+
+- Round 130 — Tone Map Derived Image Item (`tmap`) compliance audit
+  (av1-avif v1.2.0 §4.2.2). The HEIF-defined `tmap` descriptor body
+  parse is intentionally out of scope (the only HEIF edition currently
+  shipped in `docs/image/heif/` is the 2017 first edition which
+  predates `tmap`); what av1-avif §4.2.2 *does* normatively require
+  independently of the body is two file-shape `should` constraints
+  this round audits:
+  1. The `tmap` item and its base image item (input `0` of the tmap's
+     `'dimg'` iref) should be grouped together by an `'altr'` entity
+     group so legacy readers still see a valid alternate.
+  2. Each gain-map input image item (`to_ids[1..]` of the same iref)
+     should be a HEIF [hidden image item][HEIF §6.4.2] (`infe` flags
+     low bit set) so it's never surfaced directly.
+  New surface: `derived::ToneMapCompliance` struct (per-item record),
+  `derived::audit_tone_map(&Meta)` walker, plus
+  `AvifInfo::tone_map_compliance: Vec<ToneMapCompliance>` populated in
+  both the single-item and grid `build_info` paths, with a summary
+  `AvifInfo::tone_map_strict_compliant()` predicate.
+- `ItemInfo` now retains the 24-bit `infe` FullBox `flags` field
+  (previously discarded). New `ItemInfo::is_hidden()` helper exposes
+  the HEIF §6.4.2 hidden-image bit (`(flags & 0x01) == 0x01`).
+- 8 new unit tests in `derived::tests` covering: full happy-path
+  pairing (one tmap + base + `altr`); compliance with a hidden gain
+  map; both-failures path (no `grpl` + visible gain map) surfacing
+  both `missing()` strings; `altr` group missing the tmap id;
+  tmap with no `dimg` iref at all; empty audit list when no tmap
+  items present; multiple tmap items returned in `iinf` declaration
+  order; `ItemInfo::is_hidden` low-bit semantics across the 24-bit
+  flag space.
+
+- Round 127 — Sample Transform Derived Image Item (`sato`) descriptor
+  parser + evaluator (av1-avif v1.2.0 §4.2.3). Container-level only,
+  no AV1 decode dependency. The descriptor is decoded with
+  `oxideav_avif::derived::SampleTransform::parse(payload,
+  reference_count)`; the strict parser enforces every spec assertion
+  (`66976029` non-zero `token_count`, `1f569fa5` sample-index ≤
+  `reference_count`, `989adc85` postfix order, `98b07e13` unary stack
+  pre-condition, `75c5cbbc` binary stack pre-condition, `bac41e3a`
+  single-element terminal stack, reserved-token rejection per
+  §4.2.3.3). A relaxed counterpart (`parse_relaxed`) surfaces reserved
+  tokens as `Token::Reserved(u8)` for diagnostic dumps. The full
+  operator table is implemented: unary `negation` / `abs` / `not` /
+  `bsr` (Table 2 rows 64..=67), binary `sum` / `difference` /
+  `product` / `quotient` / `and` / `or` / `xor` / `pow` / `min` /
+  `max` (rows 128..=137), `Constant` (row 0) with bit-depth-keyed
+  field width (1 / 2 / 4 / 8 bytes for `bit_depth` 0..=3 per Table
+  1), and `Sample(n)` (1-based input index). `SampleTransform::
+  evaluate(&inputs)` walks the postfix expression to produce one
+  output sample value; intermediate arithmetic saturates at i64 then
+  clamps to the `num_bits` precision per §4.2.3.3 underflow / overflow
+  rule. Composition into a reconstructed image is deferred until
+  `oxideav-av1` exposes a decoder again.
+- New `meta::ITEM_TYPE_SATO` + `meta::ITEM_TYPE_TMAP` four-CC
+  constants and a generic `Meta::item_ids_of_type(&four_cc)` walker
+  for enumerating derived-image carriers by type.
+- `AvifInfo` surfaces `sato_item_ids: Vec<u32>` + `tmap_item_ids:
+  Vec<u32>` populated by both the single-item and grid `build_info`
+  paths, with `has_sample_transform()` / `has_tone_map()` predicates
+  for callers that only need a presence gate. The Tone Map carrier
+  side parses the item-type four-CC only; the HEIF-defined `tmap`
+  descriptor body parse is a follow-up.
+- 21 new unit tests in `derived::tests` covering: round-trip parse +
+  evaluation at every `bit_depth` (0..=3 → 8/16/32/64-bit
+  intermediate); two-sample postfix sum and difference (right-pop-
+  first ordering verified); the av1-avif Appendix A
+  MSB/residual recombination example
+  (`Sample(1) Const(2) Const(8) pow product Sample(2) sum` =
+  `(msb << 8) | residual`); unary negation; unary `bsr` (0 for
+  `L <= 0`, `truncate(log2(L))` for `L > 0`); quotient with `R == 0`
+  returning `L`; pow with `L == 0` returning `0`; min / max; rejection
+  of `token_count = 0`, non-zero `version`, sample index >
+  `reference_count`, every reserved-byte range (33..=63, 68..=127,
+  138..=255), binary op with insufficient operands, expression with
+  leftover stack, truncated token stream, truncated constant payload;
+  Token classification helpers; min/max value per bit-depth; and the
+  graceful error path when `evaluate` receives fewer inputs than the
+  expression dereferences. 2 new integration tests build a synthetic
+  AVIF with an `av01` primary + `sato` derived item linked by `dimg`
+  and exercise the full pipeline: `inspect` returns the right
+  `sato_item_ids`, `item_payload_bytes` resolves the descriptor body
+  through `iloc`, and `SampleTransform::parse` round-trips the
+  identity (`Sample(1)`) expression. The companion "no sato in
+  typical files" test pins the Microsoft monochrome fixture's
+  baseline.
+
+- Round 123 — AV1 layered-image item properties + essential-property
+  enforcement (av1-avif §2.3.2 + MIAF §7.3.5). Container-level box work,
+  no AV1 decode dependency:
+  - `a1op` OperatingPointSelectorProperty parser (av1-avif §2.3.2.1) —
+    bare `ItemProperty` carrying a single `unsigned int(8) op_index`.
+    New `meta::A1op { op_index }` type. The spec mandates this property
+    be marked essential.
+  - `a1lx` AV1LayeredImageIndexingProperty parser (av1-avif §2.3.2.3) —
+    `unsigned int(7) reserved + unsigned int(1) large_size` byte then
+    three `(large_size+1)*16`-bit `layer_size` values. New
+    `meta::A1lx { large_size, layer_size: [u32; 3] }` with a
+    `documented_layers()` helper that counts the leading non-zero run
+    (= number of layers minus one).
+  - Both routed through `Property::A1op` / `Property::A1lx` (previously
+    fell into `Property::Other`) and surfaced on `AvifInfo` as
+    `operating_point: Option<A1op>` / `layered_index: Option<A1lx>`,
+    resolved on the primary item for both single-item and grid paths.
+  - Essential-property enforcement: `Meta::unsupported_essential_properties`
+    + `Meta::has_unsupported_essential_property` report any property that
+    is marked essential (the `ipma` association high bit) yet lands in
+    `Property::Other` — i.e. an essential property this crate cannot
+    interpret. Per av1-avif §2.3.2.1.2 + MIAF §7.3.5 a reader must not
+    process such an item. A recognised property (typed, even if only
+    ignored downstream) and any non-essential unknown property do not
+    block; a dangling association index that is essential does.
+  - Tests: +8 unit (`a1op`/`a1lx` field-width round-trips, `ipco`
+    dispatch, three essential-enforcement cases) + 3 integration
+    (synthetic single-item AVIF carrying `a1op`/`a1lx` surfaced through
+    `inspect`, the negative no-props path on the mono fixture, and an
+    essential-but-recognised `a1op` not blocking the item).
+
+- Round 81 — derived-image + entity-grouping + MIAF compliance. Container
+  side gains a coordinated batch of HEIF surface that doesn't need the
+  AV1 decoder (oxideav-av1 is a `NotImplemented` scaffold post the
+  2026-05-20 orphan rebuild):
+  - `auxC` URN classification (`AuxKind { Alpha, DepthMap, HdrGainMap,
+    Other }`) covering MPEG and HEVC-HEIF URN spellings plus Apple's
+    HDR gain-map URN. `Meta::aux_items_for` enumerates every aux item
+    attached to a given target; `AvifInfo` adds `aux_items`,
+    `alpha_aux_kind`, `depth_map_item_id`, `hdr_gain_map_item_id`,
+    `has_depth_map()`, `has_hdr_gain_map()`.
+  - `rloc` relative-location property parser (HEIF §6.5.7) — FullBox
+    with two big-endian u32 offsets.
+  - `lsel` layer-selector property parser (HEIF §6.5.11) — ItemProperty
+    (no FullBox) with one u16 layer_id.
+  - `iovl` image-overlay descriptor parser (HEIF §6.6.2.2) in the new
+    `derived` module. Handles both 16-bit and 32-bit field-width
+    variants (`flags & 1`) and signed offsets per spec; emits
+    `ImageOverlay { canvas_fill_value, output_*, entries: Vec<OverlayEntry> }`.
+  - Entity-grouping (`grpl`) parser (HEIF §9.4) — `parse_grpl` walks
+    a `GroupsListBox` payload into typed `EntityGroup` per
+    `EntityToGroupBox`, with `is_alternates()` / `is_stereo_pair()` /
+    `is_equivalence()` helpers. `Meta` captures the raw `grpl` slice
+    during walk; `Meta::groups()` lazy-parses on demand.
+  - `audit_mif1` brand-compliance audit (HEIF §10.2.1.1) returning a
+    `Mif1Compliance { is_compliant(), missing(), claims_mif1, ... }`.
+    `AvifInfo.mif1_compliance` carries the audit alongside
+    `is_strict_mif1()`. Pinned against the Microsoft monochrome
+    fixture (fully compliant) plus a synth ftyp-only no-meta input.
+  - `Meta` exposes raw `grpl` + `idat` slices for downstream routing
+    of entity groups and item-data-bearing derived items.
+
+### Notes
+
+- Workspace-local builds (when the umbrella `[patch.crates-io]` table
+  resolves `oxideav-av1` to the orphan-rebuilt master) currently fail
+  the registry-gated build because the rebuilt av1 crate is a
+  `NotImplemented` scaffold with no `Av1CodecConfig` / `Av1Decoder`.
+  CI for this repo checks out the avif crate alone and pulls
+  `oxideav-av1` from crates.io (currently 0.1.8, pre-rebuild), so the
+  registry path keeps building + testing through CI. Resolution
+  arrives when the av1 clean-room ships its decoder; until then the
+  consumer-must-wait-for-publisher pattern in the workspace memory
+  applies.
+- `tests/integration.rs` graceful-skip predicate accepts the future
+  `oxideav-av1` "decoder unavailable" / `NotImplemented` shape
+  alongside the existing coded_lossless / §7.7.4 limitation so that
+  when av1 0.2.x publishes and the registry path starts returning
+  the new error string, end-to-end decode tests still graceful-skip
+  rather than failing.
+
+- Round 75 — HEIF item properties + iref typed-relationship enumeration.
+  Container side pushes further into the descriptive surface around the
+  primary AV1 OBU stream:
+  - `ItemInfo` carries optional `content_type`, `content_encoding`,
+    and `item_uri_type` populated from the tail of an `infe` v2/v3
+    box for `item_type == 'mime'` and `item_type == 'uri '` per
+    ISO/IEC 14496-12 §8.11.6.2. Generic item types stop after
+    `item_name` so the common path stays compact.
+  - `Meta::iref_sources_of(&BoxType, u32) -> Vec<u32>` walks every
+    iref of a given reference_type whose `to_ids` contains the
+    target — needed because a primary may have multiple thumbnails
+    or be linked from multiple metadata items.
+  - `Meta::is_alpha_premultiplied_for(u32) -> bool` checks for a
+    HEIF `prem` iref linking an alpha auxiliary to the colour image
+    per ISO/IEC 23008-12 §6.10.1.1.
+  - `AvifInfo` gains `thumbnail_item_ids: Vec<u32>`,
+    `exif_item_id: Option<u32>`, `xmp_item_id: Option<u32>`, and
+    `premultiplied_alpha: bool`. Helpers: `has_thumbnails()`,
+    `has_descriptive_metadata()`. Exif detection accepts native
+    `item_type == 'Exif'` AND the libheif-style `mime` carrier with
+    `application/octet-stream` / `image/tiff` / `image/x-exif`
+    content_type. XMP is detected via `mime` +
+    `application/rdf+xml` (case-insensitive).
+  - `item_payload_bytes(file, item_id) -> Result<Vec<u8>>`:
+    public extractor that wraps `item_bytes_owned` so a caller with
+    a populated `AvifInfo` can pull the Exif TIFF / XMP RDF/XML
+    blob out in one call.
+  - Public constants exposed: `ITEM_TYPE_AV01`, `ITEM_TYPE_GRID`
+    (re-exported from `parser`), `ITEM_TYPE_EXIF`, `ITEM_TYPE_MIME`,
+    `ITEM_TYPE_URI` (in `meta`).
+  - New tests: `infe_v2_mime_parses_content_type_and_encoding`,
+    `infe_v3_mime_octet_stream_for_exif`,
+    `infe_v2_uri_parses_uri_type`,
+    `infe_v2_generic_item_type_stops_at_name`,
+    `iref_sources_of_returns_all_matches`,
+    `is_alpha_premultiplied_for_detects_prem_iref` (meta.rs);
+    `inspect_fixture_resolves_native_exif_metadata_item` plus six
+    `resolve_metadata_*` cases (inspect.rs). Lib test count
+    104 → 118.
+
+- Fuzz-driven hardening pass at the AVIF→AV1 boundary (workspace task
+  #730). Adds defensive validation that refuses adversarial input
+  before it reaches the AV1 decoder's entropy / transform stages,
+  guarding against the arithmetic-overflow class of crashes the
+  daily fuzz workflow surfaced through round 46:
+  - New `validate_av1_config` rejects an `av1C` record whose
+    `seq_profile > 2` (AV1 §A.4 reserved), whose `seq_level_idx_0`
+    falls in the reserved 24..=30 range (AV1 §A.3), whose
+    `monochrome` flag is set without both chroma-subsampling bits
+    (AV1 §5.5.2 requires 4:0:0 to set both), whose 4:2:2 chroma
+    declaration appears outside `seq_profile = 2` (AV1 §5.5.2), or
+    whose 4:4:4 chroma declaration appears in `seq_profile = 0`
+    (AV1 §5.5.2). Six unit tests cover each rejection plus the
+    canonical 4:2:0 / profile-0 acceptance case.
+  - `decode_av01_item` + `decode_avis_file` enforce a 32 MiB soft
+    cap on the AV1 OBU payload they will hand to the AV1 decoder.
+    Real-world AVIF items stay well under this; the cap protects
+    against pathological inputs that would dominate the fuzz wall
+    clock without surfacing useful crashes.
+  - `infer_av1_pixmap` swaps the `u.stride * 2` debug-overflowable
+    multiplication for `saturating_mul`, and now refuses a zero
+    U-plane stride explicitly (AV1 §7.3.1 requires positive plane
+    strides on every decoded frame).
+- `oxideav-avif::avis::sample_table` enforces a soft cap of
+  16 Mi expanded samples to defend against `stsc` entries whose
+  `samples_per_chunk` field has been inflated to `0xFFFF_FFFF` —
+  without this guard the per-chunk expansion loop ran for hours
+  (ISO/IEC 14496-12 §8.7.4 doesn't bound the field, but real AVIS
+  streams stay 5 orders of magnitude below the cap). Unit test
+  `sample_table_rejects_oversized_stsc_expansion` pins the path.
+- Defensive arithmetic across the box walker:
+  `parse_box_header` / `read_u16` / `read_u32` / `read_u64` now
+  use `checked_add` for every offset computation and refuse
+  `usize::MAX`-adjacent positions instead of debug-panicking
+  (ISO/IEC 14496-12 §4.2 box-size invariants). Two new unit tests
+  in `box_parser`: `rejects_offset_overflow` and
+  `read_u32_rejects_overflow_offset`.
+- New regression-test crate
+  (`crates/oxideav-avif/tests/fuzz_regressions.rs`) anchored on
+  three real AVIF bitstreams captured from the daily fuzz workflow
+  (`y_plane_divergence_match.avif`, `y_plane_roundtrip_avif1.avif`,
+  `y_plane_roundtrip_avif2.avif`). The tests assert decode does
+  not panic; pixel correctness remains the cross-decode harness's
+  responsibility (the residual Y-plane divergence is tracked as
+  workspace task #786 in `oxideav-av1`). Fourth test pins the
+  malformed-av1C high-`seq_profile` rejection from the validator
+  pass above.
+- AVIS (AVIF Image Sequence) end-to-end decode pipeline
+  (`AvifDecoder::decode_avis_file`). Walks the track's sample table
+  via the existing [`avis::parse_avis`] surface, lifts the
+  `AV1CodecConfigurationRecord` from `stsd` → `av01` → `av1C` (new
+  field `AvisMeta::av1_codec_config`), and fans every sample through
+  a single shared [`oxideav_av1::Av1Decoder`] so inter-frame
+  prediction state is preserved across samples (when av1 supports
+  it). Each successfully decoded sample is queued on the
+  `pending` buffer with a `pts` derived from the cumulative `stts`
+  duration so `Decoder::receive_frame` returns frames in
+  presentation order.
+- `AvifDecoder::send_packet` now dispatches to the sequence path
+  automatically when the brand classification surfaces `is_sequence`
+  (`avis`) or `has_msf1` (`msf1`) and the file carries a `moov`. The
+  still-image path remains the fallback when the sequence claim is
+  bogus (no `moov` present), so a misbranded file is still decoded.
+- New AVIS-decode integration tests:
+  `avis_decode_dispatches_to_sequence_path`,
+  `decode_avis_file_returns_frame_count_or_propagates_av1_error`,
+  plus three unit tests for the new `find_av1c_in_stbl` helper
+  (round-trip on a synthesized stsd→av01→av1C chain, missing-av01
+  guard, truncated av01 payload guard) and one fixture-driven test
+  (`alpha_video_avis_exposes_av1c`).
+
+### Changed
+
+- Integration tests that previously called `AvifDecoder::send_packet`
+  on lossless RED64 / GRAY32 / MIDGRAY64 / WHITE16 fixtures now
+  tolerate the `Error::Unsupported(coded_lossless …)` path that
+  oxideav-av1 returns until §7.7.4 IWHT dispatch + coefficient
+  context derivation lands (workspace task #765). The transform-
+  pipeline tests (`end_to_end_decode_then_irot_roundtrips`,
+  `end_to_end_decode_then_imir_roundtrips`,
+  `end_to_end_decode_then_clap_centre_crop`,
+  `clap_with_zero_denominator_is_passthrough`) fall back to a
+  deterministic synthetic 4:4:4 frame when av1 declines, so the
+  pixel-permutation invariants they exercise still run end-to-end.
+  No `#[ignore]` attribute added; the tests still execute and assert.
+
+## [0.0.7](https://github.com/OxideAV/oxideav-avif/compare/v0.0.6...v0.0.7) - 2026-05-06
+
+### Other
+
+- drop dead `linkme` dep
+- re-export __oxideav_entry from registry_glue sub-module
+- HDR metadata + AV1 wrap pass-through + multi-extent iloc
+- registry calls: rename make_decoder/make_encoder → first_decoder/first_encoder
+- auto-register via oxideav_core::register! macro (linkme distributed slice)
+- unify entry point on register(&mut RuntimeContext) ([#502](https://github.com/OxideAV/oxideav-avif/pull/502))
+- add register_containers for .avif / .avifs extension lookup
+
+### Added
+
+- r22: HDR metadata pass-through (`mdcv` / `clli` / `cclv` item
+  properties). All three boxes are now parsed and surfaced through
+  `AvifInfo`:
+  - `mdcv` (`MasteringDisplayColourVolumeBox`, SMPTE ST 2086): display
+    primaries (R/G/B) in chromaticity × 50000, white point, and max/min
+    display luminance in 1/10000 cd/m² units. New `Mdcv` type in
+    `meta.rs`.
+  - `clli` (`ContentLightLevelBox`, ISO/IEC 14496-12 §12.1.5.4):
+    MaxCLL + MaxFALL in cd/m². New `Clli` type.
+  - `cclv` (draft av1-avif extension — same binary layout as `clli`).
+    New `Cclv` type.
+  - `AvifInfo` gains `mdcv: Option<Mdcv>`, `clli: Option<Clli>`,
+    `cclv: Option<Cclv>`, plus helpers `has_hdr_metadata()`,
+    `max_cll() -> Option<u16>`, `max_fall() -> Option<u16>`.
+  - Grid primaries resolve HDR properties with the same fallback
+    chain as `colr`/`pixi`/`pasp`: grid item first, tile 0 second.
+  - New unit tests: `mdcv_round_trip`, `mdcv_rejects_truncated`,
+    `clli_round_trip`, `clli_rejects_truncated`, `cclv_round_trip`,
+    `cclv_rejects_truncated` (meta.rs); `inspect_sdr_fixture_has_no_hdr_metadata` (inspect.rs).
+
+- r22: AV1 wrap pass-through — `bit_depth`, `monochrome`,
+  `chroma_subsampling` decoded from `av1C` and stored on `AvifInfo`:
+  - `bit_depth: Option<u8>` — 8 / 10 / 12 derived from
+    `(high_bitdepth, twelve_bit)` flags in the `av1C` record. `None`
+    when `av1c` is empty (< 3 bytes).
+  - `monochrome: bool` — mirrors the `av1C` monochrome bit.
+  - `chroma_subsampling: Option<(bool, bool)>` — `(subsampling_x,
+    subsampling_y)` for colour streams; `None` for monochrome.
+  - New `decode_av1c_flags()` internal helper (also tested directly).
+  - New tests: `inspect_av1c_flags_decoded`,
+    `decode_av1c_flags_hdr_bit_depths` (inspect.rs).
+
+- r22: Multi-extent `iloc` item support — new public `item_bytes_owned`
+  helper concatenates all extents for items that span more than one
+  `iloc` extent entry (HEIF §8.11.3.3). The existing zero-copy
+  `item_bytes` fast path is preserved for the common single-extent case.
+  `item_bytes` now returns a descriptive `Unsupported` error for
+  multi-extent items so callers know to use `item_bytes_owned`. New
+  tests: `item_bytes_owned_single_extent_matches_item_bytes`,
+  `item_bytes_owned_multi_extent_concatenates`,
+  `item_bytes_owned_rejects_idat_method` (parser.rs).
+
+## [0.0.6](https://github.com/OxideAV/oxideav-avif/compare/v0.0.5...v0.0.6) - 2026-05-04
+
+### Other
+
+- standalone retrofit follow-up: gate integration tests + diag_decode example on `registry`
+- handle irot dim swap in decoder_pipes_through_av1_errors_cleanly
+- rustfmt sweep on standalone-retrofit + fuzz round 2 commits
+- fuzz round 2: pixel cross-validation + oxideav<->libavif re-encode roundtrip ([#304](https://github.com/OxideAV/oxideav-avif/pull/304))
+- standalone retrofit: gate oxideav-core + oxideav-av1 behind `registry` feature
+- cargo-fuzz harness with libavif as cross-decode oracle
+
+### Fixed
+
+- Standalone retrofit follow-up (#360). `cargo build/test/clippy
+  --no-default-features` now actually walks every target. The
+  `tests/integration.rs` suite is gated `#![cfg(feature = "registry")]`
+  (every test wraps `AvifDecoder` + `oxideav_core::Decoder`), and the
+  `examples/diag_decode.rs` example carries `required-features =
+  ["registry"]` in `Cargo.toml` so cargo skips it cleanly when the
+  feature is off. Without these gates the standalone build was green
+  but `cargo test --no-default-features` failed to compile the
+  integration target. `cargo tree --no-default-features` now shows
+  zero transitive deps.
+
+### Added
+
+- Fuzz round 2 (#304). Two libavif-driven cross-validation harnesses
+  added to `fuzz/`:
+  - `libavif_encode_oxideav_libavif_decode_match` — encode with
+    libavif lossless YUV444+IDENTITY, decode the resulting bitstream
+    with BOTH `oxideav-avif` and `libavif`, assert pixels match
+    plane-by-plane (Y=G, U=B, V=R per the IDENTITY-matrix lossless
+    contract). Catches decoder divergences from the libavif
+    reference.
+  - `libavif_oxideav_reencode_roundtrip` — closest realisable
+    approximation of the literal "self-roundtrip" task: oxideav
+    decodes → libavif re-encodes the decoded pixels → oxideav decodes
+    again → assert P₁ == P₂. Validates oxideav-avif's decoder is
+    bit-stable across a re-encode by libavif.
+  - The literal "fuzz-generated AVIF → decode → re-encode → decode
+    again" of the task spec is blocked on an oxideav AVIF encoder
+    (today `make_encoder` returns `Error::Unsupported` because
+    oxideav lacks an AV1 encoder). Both harnesses skip silently when
+    libavif isn't installed; the daily fuzz workflow installs
+    `libavif-dev` so CI exercises the assertions.
+
+### Added
+
+- Standalone-friendly retrofit (#360 sweep). New default-on `registry`
+  Cargo feature gates the `oxideav-core` + `oxideav-av1` dependencies
+  plus the `oxideav_core::Decoder` trait surface (`AvifDecoder`,
+  `make_decoder`, `register`, `register_with_av1`, `make_encoder`).
+  With the feature off the crate exposes the HEIF box walker
+  (`box_parser`, `meta`, `parser`), AVIS sample-table walker
+  (`avis::parse_avis`), grid + alpha + transform composition layer
+  (operating on crate-local `AvifFrame` / `AvifPixelFormat` /
+  `AvifPlane`), `inspect::AvifInfo` + container-side colour helpers
+  (`cicp::*`), and the `AvifError` / `Result` types — all without
+  pulling either framework dep into the dep tree.
+  - New crate-local types: `AvifError`, `AvifFrame`, `AvifPlane`,
+    `AvifPixelFormat`. With `registry` enabled, `From` /
+    `TryFrom` conversions to/from `oxideav_core::frame::VideoFrame` /
+    `VideoPlane` / `PixelFormat` are exposed for callers that bridge
+    both worlds.
+  - Module split: `inspect.rs` carries the standalone container-side
+    surface (`AvifInfo`, `inspect`, `transforms_for`,
+    `build_info`, `build_info_grid`); `decoder.rs` keeps the
+    registry-only AV1 + composition pipeline.
+  - Inline `ci-standalone` job builds and tests the lib with
+    `--no-default-features` so future regressions where a pipeline
+    module re-grows an `oxideav-core` import fail CI.
+
+## [0.0.5](https://github.com/OxideAV/oxideav-avif/compare/v0.0.4...v0.0.5) - 2026-05-03
+
+### Other
+
+- replace never-match regex with semver_check = false
+- migrate to centralized OxideAV/.github reusable workflows
+- grid hardening — chroma tile-edge alignment + colr/pixi/pasp fallback
+- round 20 — CICP color path
+- round 19 — pixi/pasp helpers, grid hardening, AVIS sample bytes
+- round 18 — MIAF brand validation + colr surface + imir/clap end-to-end tests
+- round 17 — drop obsolete panic catch_unwind, add irot end-to-end + transforms_for tests
+- adopt slim VideoFrame/AudioFrame shape
+- pin release-plz to patch-only bumps
+
+### Added
+
+- r21: grid hardening for multi-tile MIAF AVIFs (HEIF §6.6.2.3 +
+  av1-avif §4.2.1).
+  - **Tile-edge chroma alignment** (`composite_grid`): chroma copy
+    extents now use ceiling division of the trimmed luma copy
+    extent, so a 4:2:0 grid whose right-most or bottom-most tile is
+    clipped to an odd luma column / row count copies the full
+    trailing chroma sample instead of dropping it. Example regression
+    fixed: 4:2:0 grid with `tile_w=4`, `output_w=7` previously copied
+    1 chroma column for the right tile (canvas needed 2). Same fix
+    applies to 4:2:2 horizontal subsampling. Source-side and
+    destination-side clamps added so a tile whose chroma plane is
+    smaller than its luma-derived ceiling — or that overhangs the
+    canvas edge — truncates safely.
+  - **Grid `colr` / `pixi` / `pasp` resolution** (`build_info_grid`):
+    every descriptive property now follows the same fallback chain —
+    grid-item association first (canonical placement, describes the
+    reconstructed canvas), tile-0 association second (the libheif
+    writer pattern, OK because av1-avif §4.2 makes per-tile values
+    uniform). Previously only `colr` had the fallback; `pixi` looked
+    only at tile 0 and `pasp` only at the grid item.
+  - New tests: `composite_yuv420_odd_width_copies_full_chroma_edge`,
+    `composite_yuv420_odd_height_copies_full_chroma_edge`,
+    `composite_yuv420_odd_both_axes_trims_corner_tile`,
+    `composite_yuv422_odd_width_chroma_edge`,
+    `composite_yuv420_undersized_source_chroma_safely_clamps`,
+    `ceil_shift_matches_division_ceiling` (lib),
+    `effective_cicp_grid_test`, `pixi_resolves_via_grid_then_tile_fallback`,
+    `pasp_resolves_via_grid_then_tile_fallback`,
+    `grid_tile_edge_geometry_round_trips` (integration).
+- r20: CICP color signalling — `CicpTriple` quadruple
+  `(primaries, transfer, matrix, full_range)` with ITU-T H.273
+  defaults (`Unspecified = 2/2/2/false`) when `colr` is absent or
+  ICC. Surfaced via `AvifInfo::effective_cicp()` and
+  `effective_cicp(Option<&Colr>)`. Predicates: `is_unspecified`,
+  `is_identity_matrix` (matrix=0 RGB), `is_libavif_srgb_default`
+  ((1, 13, 6)), `has_reserved`. Name lookups: `primaries_name`,
+  `transfer_name`, `matrix_name`. `CicpTriple::ALPHA` /
+  `for_alpha()` reflects av1-avif §4.1 alpha-auxiliary defaults
+  (`full_range = true`, others Unspecified).
+
+### Notes
+
+- AVIF readers must NOT apply colour transforms to decoded
+  samples — av1-avif §4.2.3.1. The CICP path is signalling only.
+
+## [0.0.4](https://github.com/OxideAV/oxideav-avif/compare/v0.0.3...v0.0.4) - 2026-04-25
+
+### Added
+
+- parse HEIF container + extract AV1 OBUs; hand off to oxideav-av1
+
+### Other
+
+- ignore decodes_flat_gray_to_mid_value pending av1 fix
+- fix clippy 1.95 lints
+- drop oxideav-codec/oxideav-container shims, import from oxideav-core
+- round-5 end-to-end decode gate — flat-content AVIFs decode
+- phase 8 integration tests + conformance fixtures
+- phase 8 — grid, alpha, transform, AVIS sample table
+- bump oxideav-av1 dep to 0.1
+- drop Cargo.lock — this crate is a library
+- bump oxideav-core / oxideav-codec dep examples to "0.1"
+- bump to oxideav-core 0.1.1 + codec 0.1.1
+- migrate register() to CodecInfo builder
+- bump oxideav-core + oxideav-codec deps to "0.1"

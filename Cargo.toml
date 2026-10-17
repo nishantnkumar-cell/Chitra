@@ -1,0 +1,123 @@
+[package]
+name = "chtra"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Fast, small, memory-safe photo viewer and batch converter (JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF, HEIC)"
+license = "AGPL-3.0-or-later"
+
+[[bin]]
+name = "chtra"
+path = "src/main.rs"
+
+[[bin]]
+name = "chtra-cli"
+path = "src/bin/chtra-cli.rs"
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "avif", "rayon"] }
+jxl = "0.7.4"
+zenwebp = { version = "0.4.4", optional = true }
+jxl-encoder = { version = "0.3.1", default-features = false, features = ["std", "parallel"], optional = true }
+zune-jpegxl = "0.5.2"
+zune-core = "0.5"
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+rfd = "0.17.2"
+kamadak-exif = "0.6.1"
+fast_image_resize = { version = "6.1.0", features = ["image", "rayon"] }
+trash = "5.2.9"
+lexopt = "0.3.2"
+rayon = "1.12.0"
+natord = "1.0.9"
+arboard = "3.7.0"
+heifer = "0.2.0"
+oxideav-avif = "0.0.15"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
+[patch.crates-io]
+# Fixes decoding AVIF images with odd widths; see vendor/oxideav-avif/PATCHED.md.
+oxideav-avif = { path = "vendor/oxideav-avif" }
+
+[features]
+default = ["lossy-encoders"]
+# Lossy WebP and JPEG XL output via zenwebp and jxl-encoder (pure Rust, but
+# licensed AGPL-3.0 or commercial). Build with --no-default-features for a
+# binary without them that writes WebP and JPEG XL lossless only.
+lossy-encoders = ["dep:zenwebp", "dep:jxl-encoder"]
+
+[build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+# Small by default; the pixel-crunching crates are built for speed.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+# Unwind (not abort) so a codec bug fails one file, not the app; see isolate().
+panic = "unwind"
+strip = true
+
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.zune-jpeg]
+opt-level = 3
+
+[profile.release.package.zune-core]
+opt-level = 3
+
+[profile.release.package.png]
+opt-level = 3
+
+[profile.release.package.fdeflate]
+opt-level = 3
+
+[profile.release.package.miniz_oxide]
+opt-level = 3
+
+[profile.release.package.gif]
+opt-level = 3
+
+[profile.release.package.weezl]
+opt-level = 3
+
+[profile.release.package.color_quant]
+opt-level = 3
+
+[profile.release.package.image-webp]
+opt-level = 3
+
+[profile.release.package.jxl]
+opt-level = 3
+
+[profile.release.package.heifer]
+opt-level = 3
+
+[profile.release.package.heifer-hevc-dec]
+opt-level = 3
+
+[profile.release.package.heifer-isobmff]
+opt-level = 3
+
+[profile.release.package.jxl_simd]
+opt-level = 3
+
+[profile.release.package.jxl_transforms]
+opt-level = 3
+
+[profile.release.package.zune-jpegxl]
+opt-level = 3
+
+[profile.release.package.fast_image_resize]
+opt-level = 3
+
+[profile.release.package.rayon]
+opt-level = 3
+
+[profile.release.package.rayon-core]
+opt-level = 3

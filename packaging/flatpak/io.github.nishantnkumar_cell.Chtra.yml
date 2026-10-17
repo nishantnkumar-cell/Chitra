@@ -1,0 +1,44 @@
+# Flatpak of the Linux release build. Build it after tools/package_linux.sh:
+#   flatpak-builder --user --install-deps-from=flathub --repo=repo build \
+#       packaging/flatpak/io.github.nishantnkumar_cell.Chtra.yml
+#   flatpak build-bundle repo Chtra.flatpak io.github.nishantnkumar_cell.Chtra
+id: io.github.nishantnkumar_cell.Chtra
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: chtra
+finish-args:
+  # Native Wayland on current KDE Plasma and GNOME, X11 only as a fallback.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Browse and convert photos anywhere in your home folder and on external
+  # drives. There is no network access.
+  - --filesystem=home
+  - --filesystem=/media
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+  # Deleted photos go to the desktop's own Trash.
+  - --filesystem=xdg-data/Trash
+modules:
+  - name: chtra
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: ../../dist/linux
+      - type: script
+        dest-filename: chtra-launcher
+        commands:
+          # The trash crate puts files in $XDG_DATA_HOME/Trash; outside the
+          # sandbox's private data folder, that is the desktop's Trash.
+          - export XDG_DATA_HOME="$HOME/.local/share"
+          - exec /app/libexec/chtra "$@"
+    build-commands:
+      - install -Dm755 chtra /app/libexec/chtra
+      - install -Dm755 chtra-launcher /app/bin/chtra
+      - install -Dm755 chtra-cli /app/bin/chtra-cli
+      - install -Dm644 -t /app/share/applications share/applications/io.github.nishantnkumar_cell.Chtra.desktop
+      - install -Dm644 -t /app/share/metainfo share/metainfo/io.github.nishantnkumar_cell.Chtra.metainfo.xml
+      - cp -r share/icons /app/share/
+      - install -Dm644 -t /app/share/licenses/io.github.nishantnkumar_cell.Chtra LICENSE-AGPL-3.0.txt NOTICE.txt

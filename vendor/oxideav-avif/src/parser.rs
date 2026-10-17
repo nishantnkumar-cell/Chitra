@@ -1,0 +1,1423 @@
+//! Top-level AVIF file walk: `ftyp` brand check → `meta` parse →
+//! resolve the primary item's payload inside `mdat` → return the AV1
+//! OBU byte slice + the properties the downstream decoder needs.
+
+use std::borrow::Cow;
+
+use crate::derived::Mif1Compliance;
+use crate::error::{AvifError as Error, Result};
+
+use crate::box_parser::{b, find_box, iter_boxes, parse_full_box, type_str, BoxType};
+use crate::meta::{
+    Amve, Cclv, Clli, Colr, IlocExtent, Ispe, ItemInfo, ItemLocation, Mdcv, Meta, Pasp, Pixi,
+    Property,
+};
+use oxideav_heif::{FileType, HeifFile, HeifFileRef};
+
+const FTYP: BoxType = b(b"ftyp");
+const META: BoxType = b(b"meta");
+const HDLR: BoxType = b(b"hdlr");
+const PITM: BoxType = b(b"pitm");
+const IINF: BoxType = b(b"iinf");
+const INFE: BoxType = b(b"infe");
+const ILOC: BoxType = b(b"iloc");
+const IPRP: BoxType = b(b"iprp");
+
+/// `avif` — AV1 image / image collection brand (av1-avif §6.2).
+pub const BRAND_AVIF: BoxType = b(b"avif");
+/// `avis` — AV1 image sequence brand (av1-avif §6.3).
+pub const BRAND_AVIS: BoxType = b(b"avis");
+/// `avio` — AV1 image / sequence intra-only profile (av1-avif §6.2 / §6.3).
+pub const BRAND_AVIO: BoxType = b(b"avio");
+/// `mif1` — HEIF image-item structural brand (HEIF §10.2.2).
+pub const BRAND_MIF1: BoxType = b(b"mif1");
+/// `msf1` — HEIF image-sequence structural brand (HEIF §10.3.2).
+pub const BRAND_MSF1: BoxType = b(b"msf1");
+/// `miaf` — Multi-image Application Format compatibility brand
+/// (ISO/IEC 23000-22 §7).
+pub const BRAND_MIAF: BoxType = b(b"miaf");
+/// `MA1B` — AVIF Baseline Profile (av1-avif §8.2).
+pub const BRAND_MA1B: BoxType = b(b"MA1B");
+/// `MA1A` — AVIF Advanced Profile (av1-avif §8.3).
+pub const BRAND_MA1A: BoxType = b(b"MA1A");
+
+pub const ITEM_TYPE_AV01: BoxType = b(b"av01");
+pub const ITEM_TYPE_GRID: BoxType = b(b"grid");
+
+/// The parsed AVIF **container** (the file, not its pixels): brands,
+/// the `meta` model, the primary `av01` item with its coded payload
+/// and properties — ready for hand-off to an AV1 OBU decoder.
+///
+/// Was `AvifImage` before 0.0.13; that name is now the decoded
+/// picture ([`crate::AvifImage`]), as the image-crate API contract
+/// requires.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct AvifFile<'a> {
+    pub major_brand: BoxType,
+    pub minor_version: u32,
+    pub compatible_brands: Vec<BoxType>,
+    pub meta: Meta,
+    pub primary_item_id: u32,
+    pub primary_item: ItemInfo,
+    /// AV1 OBU bitstream for the primary item.
+    ///
+    /// For the common case — a single-extent `construction_method == 0`
+    /// (file-offset) item — this borrows directly into `file` with no
+    /// allocation ([`Cow::Borrowed`]). When the primary item's bytes live
+    /// in the `meta` box's `idat` (`construction_method == 1`, HEIF
+    /// §8.11.3 / ISO/IEC 14496-12 §8.11.3) or span multiple extents, the
+    /// extents are concatenated into an owned buffer ([`Cow::Owned`]).
+    /// Deref-coerces to `&[u8]` for all reads.
+    pub primary_item_data: Cow<'a, [u8]>,
+    /// `av1C` configuration record body (the 4-byte AV1CodecConfigurationRecord
+    /// prefix + embedded config OBUs). `None` if the property store
+    /// doesn't ship one — a malformed file.
+    pub av1c: Option<Vec<u8>>,
+    pub ispe: Option<Ispe>,
+    pub colr: Option<Colr>,
+    pub pixi: Option<Pixi>,
+    pub pasp: Option<Pasp>,
+    /// Mastering display colour volume (SMPTE ST 2086 / CTA-861-G HDR).
+    pub mdcv: Option<Mdcv>,
+    /// Content light level info (MaxCLL / MaxFALL in cd/m²).
+    pub clli: Option<Clli>,
+    /// Colour volume luminance (`cclv` draft extension, same semantics as `clli`).
+    pub cclv: Option<Cclv>,
+    /// Ambient viewing environment HDR metadata (`amve`, AVIF §6.5.36).
+    pub amve: Option<Amve>,
+}
+
+impl<'a> AvifFile<'a> {
+    /// Every field as a positional argument, in declaration order
+    /// (the record is `#[non_exhaustive]`: build it here, or from
+    /// `Default` where one exists, then read / assign the public
+    /// fields).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        major_brand: BoxType,
+        minor_version: u32,
+        compatible_brands: Vec<BoxType>,
+        meta: Meta,
+        primary_item_id: u32,
+        primary_item: ItemInfo,
+        primary_item_data: Cow<'a, [u8]>,
+        av1c: Option<Vec<u8>>,
+        ispe: Option<Ispe>,
+        colr: Option<Colr>,
+        pixi: Option<Pixi>,
+        pasp: Option<Pasp>,
+        mdcv: Option<Mdcv>,
+        clli: Option<Clli>,
+        cclv: Option<Cclv>,
+        amve: Option<Amve>,
+    ) -> Self {
+        Self {
+            major_brand,
+            minor_version,
+            compatible_brands,
+            meta,
+            primary_item_id,
+            primary_item,
+            primary_item_data,
+            av1c,
+            ispe,
+            colr,
+            pixi,
+            pasp,
+            mdcv,
+            clli,
+            cclv,
+            amve,
+        }
+    }
+}
+
+/// Header-only parse that stops after `ftyp` + `meta` have been walked.
+/// Used by callers (grid composition, AVIS) that need access to the
+/// full `Meta` without committing to the single-av01-item contract
+/// [`parse`] enforces.
+#[non_exhaustive]
+pub struct AvifHeader<'a> {
+    pub file: &'a [u8],
+    pub major_brand: BoxType,
+    pub minor_version: u32,
+    pub compatible_brands: Vec<BoxType>,
+    pub meta: Meta,
+    /// The container crate's parsed view of the same bytes — the source
+    /// of truth for item payload resolution across every `iloc`
+    /// construction method (file offset, `idat`, item offset). The
+    /// `meta` above is the AVIF-side model derived from it. Borrows
+    /// `file` (`HeifFile::parse_borrowed`): the header never copies
+    /// the input.
+    pub heif: HeifFileRef<'a>,
+}
+
+impl<'a> AvifHeader<'a> {
+    /// Every field as a positional argument, in declaration order
+    /// (the record is `#[non_exhaustive]`: build it here, or from
+    /// `Default` where one exists, then read / assign the public
+    /// fields).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        file: &'a [u8],
+        major_brand: BoxType,
+        minor_version: u32,
+        compatible_brands: Vec<BoxType>,
+        meta: Meta,
+        heif: HeifFileRef<'a>,
+    ) -> Self {
+        Self {
+            file,
+            major_brand,
+            minor_version,
+            compatible_brands,
+            meta,
+            heif,
+        }
+    }
+}
+
+impl AvifHeader<'_> {
+    /// Payload bytes of `item_id` (every construction method, all
+    /// extents concatenated), borrowed from the container view when
+    /// the item is one contiguous span.
+    pub fn item_data(&self, item_id: u32) -> Result<Cow<'_, [u8]>> {
+        if self.meta.location_by_id(item_id).is_none() {
+            return Err(Error::invalid(format!(
+                "avif: item {item_id} missing in iloc"
+            )));
+        }
+        Ok(self.heif.item_data(item_id)?)
+    }
+}
+
+pub fn parse_header(file: &[u8]) -> Result<AvifHeader<'_>> {
+    // The AVIF brand rule runs on the raw `ftyp` first so a file that is
+    // not AVIF / HEIF at all is refused with the brand list in the
+    // message, before the container parse gets a say.
+    let (ftyp_payload, _) =
+        find_box(file, &FTYP)?.ok_or_else(|| Error::invalid("avif: missing ftyp"))?;
+    let (major_brand, minor_version, compatible_brands) = parse_ftyp(ftyp_payload)?;
+    classify_brands(&major_brand, &compatible_brands)?;
+    let heif = HeifFile::parse_borrowed(file)?;
+    let container = heif
+        .meta
+        .as_ref()
+        .ok_or_else(|| Error::invalid("avif: missing meta"))?;
+    let mut meta = Meta::from_container(container)?;
+    if let Some(meta_payload) = heif.top_level_payload(&META) {
+        let (_version, _flags, body) = parse_full_box(meta_payload)?;
+        if let Some((grpl, _)) = find_box(body, &b(b"grpl"))? {
+            meta.grpl = Some(grpl.to_vec());
+        }
+    }
+    Ok(AvifHeader {
+        file,
+        major_brand,
+        minor_version,
+        compatible_brands,
+        meta,
+        heif,
+    })
+}
+
+/// `(major_brand, minor_version, compatible_brands)` of a parsed `ftyp`.
+fn brands_of(ft: &FileType) -> (BoxType, u32, Vec<BoxType>) {
+    (
+        ft.major_brand,
+        ft.minor_version,
+        ft.compatible_brands.clone(),
+    )
+}
+
+/// Resolve a single-extent, `construction_method == 0` item's payload
+/// bytes via its `iloc` entry as a zero-copy slice into `file`. Public so
+/// the grid / alpha paths can independently fetch tile + alpha items.
+///
+/// Items stored in the `meta` box's `idat` (`construction_method == 1`)
+/// or spanning multiple extents are not file-offset slices; for those use
+/// [`item_bytes_with_idat`] (returns an owned [`Cow`]) instead. This
+/// helper errors on cm ≠ 0 and on multi-extent items.
+pub fn item_bytes<'a>(file: &'a [u8], loc: &ItemLocation) -> Result<&'a [u8]> {
+    resolve_item_bytes(file, loc)
+}
+
+/// Resolve an item's payload bytes via its `iloc` entry, handling both
+/// `construction_method == 0` (file-offset, bytes inside `file`) and
+/// `construction_method == 1` (idat-offset, bytes inside the `meta` box's
+/// `idat`, passed in via `idat`), and multi-extent items of either method.
+///
+/// The common single-extent cm=0 case returns a zero-copy
+/// [`Cow::Borrowed`] into `file`; idat-backed or multi-extent items
+/// concatenate into a [`Cow::Owned`] buffer.
+///
+/// Spec: ISO/IEC 14496-12 §8.11.3 — `construction_method` 0 (file_offset:
+/// absolute offsets into the file) and 1 (idat_offset: box offsets into
+/// the `idat` of the same `meta`, `data_reference_index` / `extent_index`
+/// unused, data origin = first byte of `data[]` in the ItemDataBox).
+/// `construction_method == 2` (item_offset) is not resolved here.
+pub fn item_bytes_with_idat<'a>(
+    file: &'a [u8],
+    idat: Option<&[u8]>,
+    loc: &ItemLocation,
+) -> Result<Cow<'a, [u8]>> {
+    resolve_item_bytes_with_idat(file, idat, loc)
+}
+
+/// Audit a file against the HEIF §10.2.1.1 `mif1` structural-brand
+/// requirements. The returned [`Mif1Compliance`] is informational —
+/// every flag is reported even when some are missing, so a caller that
+/// wants a strict pass / fail can decide per-flag.
+///
+/// We accept files that fail strict mif1 (lots of in-the-wild AVIFs
+/// omit one or another mif1 mandatory box) — this is a deliberate
+/// helper for callers who want stricter validation than the default
+/// reader path.
+///
+/// `claims_mif1` is set when `mif1` appears in either major_brand or
+/// the compatible_brands array. Files that don't claim mif1 can still
+/// be audited — the flag distinguishes "this file says it's mif1 and
+/// fails" from "this file makes no mif1 claim and so missing boxes
+/// are fine."
+pub fn audit_mif1(file: &[u8]) -> Result<Mif1Compliance> {
+    // Walk top-level boxes for ftyp + meta location.
+    let mut ftyp_payload: Option<&[u8]> = None;
+    let mut meta_payload: Option<&[u8]> = None;
+    for hdr in iter_boxes(file) {
+        let hdr = hdr?;
+        let payload = &file[hdr.payload_start..hdr.end()];
+        match &hdr.box_type {
+            x if x == &FTYP => ftyp_payload = Some(payload),
+            x if x == &META => meta_payload = Some(payload),
+            _ => {}
+        }
+    }
+    let mut out = Mif1Compliance::default();
+    let Some(ftyp) = ftyp_payload else {
+        return Err(Error::invalid("avif: audit_mif1 missing ftyp"));
+    };
+    let (major, _minor, compat) = parse_ftyp(ftyp)?;
+    out.claims_mif1 = major == BRAND_MIF1 || compat.contains(&BRAND_MIF1);
+    let Some(meta_p) = meta_payload else {
+        return Ok(out);
+    };
+    let (_v, _f, meta_body) = parse_full_box(meta_p)?;
+    // mif1 requires hdlr, pitm, iinf (with at least one infe), iloc,
+    // iprp directly under the meta box. Walk the body once.
+    for hdr in iter_boxes(meta_body) {
+        let hdr = hdr?;
+        let payload = &meta_body[hdr.payload_start..hdr.end()];
+        match &hdr.box_type {
+            x if x == &HDLR => out.has_hdlr = true,
+            x if x == &PITM => out.has_pitm = true,
+            x if x == &IINF => {
+                out.has_iinf = true;
+                out.infe_count = count_infe(payload)?;
+            }
+            x if x == &ILOC => out.has_iloc = true,
+            x if x == &IPRP => out.has_iprp = true,
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Count `infe` children inside an `iinf` payload without fully
+/// parsing each one. Used by [`audit_mif1`].
+fn count_infe(payload: &[u8]) -> Result<usize> {
+    let (version, _flags, body) = parse_full_box(payload)?;
+    // header carries entry_count (u16 for v0, u32 for v1) then the
+    // declared number of infe children. Use the declared count when it
+    // matches reality; otherwise walk for safety.
+    let _declared = match version {
+        0 => {
+            if body.len() < 2 {
+                0
+            } else {
+                u16::from_be_bytes([body[0], body[1]]) as usize
+            }
+        }
+        _ => {
+            if body.len() < 4 {
+                0
+            } else {
+                u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize
+            }
+        }
+    };
+    // Walk for the actual count — robust against malformed entry_count.
+    let start = if version == 0 { 2 } else { 4 };
+    if body.len() < start {
+        return Ok(0);
+    }
+    let tail = &body[start..];
+    let mut n = 0;
+    for hdr in iter_boxes(tail) {
+        let hdr = hdr?;
+        if hdr.box_type == INFE {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// Parse an AVIF file, returning the bits needed to decode the primary
+/// image. The input must contain the whole file; box offsets in `iloc`
+/// are absolute.
+///
+/// This path errors out when the primary item type is not `av01` — use
+/// [`parse_header`] + the `grid` module to handle grid primaries.
+pub fn parse(file: &[u8]) -> Result<AvifFile<'_>> {
+    let hdr = parse_header(file)?;
+    let AvifHeader {
+        file: _,
+        major_brand,
+        minor_version,
+        compatible_brands,
+        meta,
+        heif,
+    } = hdr;
+
+    let primary_id = meta
+        .primary_item_id
+        .ok_or_else(|| Error::invalid("avif: missing pitm"))?;
+    let primary_info = meta
+        .item_by_id(primary_id)
+        .ok_or_else(|| Error::invalid("avif: pitm references unknown item"))?
+        .clone();
+    if primary_info.item_type != ITEM_TYPE_AV01 {
+        return Err(Error::unsupported(format!(
+            "avif: primary item type '{}' != 'av01'",
+            type_str(&primary_info.item_type)
+        )));
+    }
+
+    if meta.location_by_id(primary_id).is_none() {
+        return Err(Error::invalid("avif: primary item missing in iloc"));
+    }
+    let primary_data = primary_payload(file, &heif, primary_id)?;
+
+    let av1c = match meta.property_for(primary_id, b"av1C") {
+        Some(Property::Av1C(bytes)) => Some(bytes.clone()),
+        _ => None,
+    };
+    let ispe = match meta.property_for(primary_id, b"ispe") {
+        Some(Property::Ispe(v)) => Some(*v),
+        _ => None,
+    };
+    let colr = match meta.property_for(primary_id, b"colr") {
+        Some(Property::Colr(v)) => Some(v.clone()),
+        _ => None,
+    };
+    let pixi = match meta.property_for(primary_id, b"pixi") {
+        Some(Property::Pixi(v)) => Some(v.clone()),
+        _ => None,
+    };
+    let pasp = match meta.property_for(primary_id, b"pasp") {
+        Some(Property::Pasp(v)) => Some(*v),
+        _ => None,
+    };
+    let mdcv = match meta.property_for(primary_id, b"mdcv") {
+        Some(Property::Mdcv(v)) => Some(*v),
+        _ => None,
+    };
+    let clli = match meta.property_for(primary_id, b"clli") {
+        Some(Property::Clli(v)) => Some(*v),
+        _ => None,
+    };
+    let cclv = match meta.property_for(primary_id, b"cclv") {
+        Some(Property::Cclv(v)) => Some(*v),
+        _ => None,
+    };
+    let amve = match meta.property_for(primary_id, b"amve") {
+        Some(Property::Amve(v)) => Some(*v),
+        _ => None,
+    };
+
+    Ok(AvifFile {
+        major_brand,
+        minor_version,
+        compatible_brands,
+        meta,
+        primary_item_id: primary_id,
+        primary_item: primary_info,
+        primary_item_data: primary_data,
+        av1c,
+        ispe,
+        colr,
+        pixi,
+        pasp,
+        mdcv,
+        clli,
+        cclv,
+        amve,
+    })
+}
+
+pub(crate) fn parse_ftyp(payload: &[u8]) -> Result<(BoxType, u32, Vec<BoxType>)> {
+    let ft = FileType::parse(FTYP, payload)?;
+    Ok(brands_of(&ft))
+}
+
+/// The primary item's payload: zero-copy into `file` when the container
+/// reports one contiguous file-offset span, otherwise the concatenated
+/// (or `idat` / item-offset resolved) bytes, owned.
+fn primary_payload<'a>(
+    file: &'a [u8],
+    heif: &HeifFileRef<'_>,
+    item_id: u32,
+) -> Result<Cow<'a, [u8]>> {
+    if let Ok(spans) = heif.item_file_spans(item_id) {
+        if let [(start, end)] = spans.as_slice() {
+            if let Some(slice) = file.get(*start..*end) {
+                return Ok(Cow::Borrowed(slice));
+            }
+        }
+    }
+    Ok(Cow::Owned(heif.item_data_owned(item_id)?))
+}
+
+/// Classification of an AVIF / HEIF `ftyp` box per av1-avif §6 + §7 +
+/// §8 and ISO/IEC 23000-22 (MIAF) §7. Surfaces both the structural
+/// brand the file claims and the optional AVIF profile.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BrandClass {
+    /// File declares an AV1 image / image-collection (`avif`) brand.
+    pub is_image: bool,
+    /// File declares an AV1 image sequence (`avis`) brand.
+    pub is_sequence: bool,
+    /// File declares the intra-only profile (`avio`).
+    pub is_intra_only: bool,
+    /// File declares the MIAF compatibility brand (`miaf`,
+    /// ISO/IEC 23000-22 §7).
+    pub is_miaf: bool,
+    /// HEIF structural brand: image-item (`mif1`).
+    pub has_mif1: bool,
+    /// HEIF structural brand: image-sequence (`msf1`).
+    pub has_msf1: bool,
+    /// AVIF Baseline Profile brand (`MA1B`).
+    pub is_baseline_profile: bool,
+    /// AVIF Advanced Profile brand (`MA1A`).
+    pub is_advanced_profile: bool,
+}
+
+impl BrandClass {
+    /// Every field as a positional argument, in declaration order
+    /// (the record is `#[non_exhaustive]`: build it here, or from
+    /// `Default` where one exists, then read / assign the public
+    /// fields).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        is_image: bool,
+        is_sequence: bool,
+        is_intra_only: bool,
+        is_miaf: bool,
+        has_mif1: bool,
+        has_msf1: bool,
+        is_baseline_profile: bool,
+        is_advanced_profile: bool,
+    ) -> Self {
+        Self {
+            is_image,
+            is_sequence,
+            is_intra_only,
+            is_miaf,
+            has_mif1,
+            has_msf1,
+            is_baseline_profile,
+            is_advanced_profile,
+        }
+    }
+}
+
+/// Classify the brand set of a parsed `ftyp` box. Errors when the file
+/// claims neither `avif` nor `avis` nor any HEIF structural brand
+/// (`mif1` / `msf1`) — without one of those there is nothing AVIF /
+/// HEIF can do with the file. The error string lists every brand seen
+/// so the caller doesn't have to dig the bytes back out.
+///
+/// Spec references:
+///
+/// * av1-avif §6.2 — `avif` for AV1 image / image collection
+/// * av1-avif §6.3 — `avis` for AV1 image sequences
+/// * av1-avif §6.2 / §6.3 — `avio` intra-only
+/// * av1-avif §7 General constraints — file shall list `miaf`
+/// * av1-avif §8.2 / §8.3 — `MA1B` Baseline / `MA1A` Advanced profile
+/// * HEIF §10.2.2 — `mif1` image-item structural brand
+/// * HEIF §10.3.2 — `msf1` image-sequence structural brand
+/// * ISO/IEC 23000-22 §7 — `miaf` compatibility brand
+pub fn classify_brands(major: &BoxType, compat: &[BoxType]) -> Result<BrandClass> {
+    let mut cls = BrandClass::default();
+    let candidates: Vec<&BoxType> = std::iter::once(major).chain(compat.iter()).collect();
+    for brand in &candidates {
+        match **brand {
+            x if x == BRAND_AVIF => cls.is_image = true,
+            x if x == BRAND_AVIS => cls.is_sequence = true,
+            x if x == BRAND_AVIO => cls.is_intra_only = true,
+            x if x == BRAND_MIAF => cls.is_miaf = true,
+            x if x == BRAND_MIF1 => cls.has_mif1 = true,
+            x if x == BRAND_MSF1 => cls.has_msf1 = true,
+            x if x == BRAND_MA1B => cls.is_baseline_profile = true,
+            x if x == BRAND_MA1A => cls.is_advanced_profile = true,
+            _ => {}
+        }
+    }
+    // Files in the wild often omit `miaf` even though av1-avif §7
+    // requires it. We accept any combination that includes either
+    // an AVIF brand (`avif`/`avis`) or a HEIF structural brand
+    // (`mif1`/`msf1`) — anything less can't be a real AVIF / HEIF
+    // file. Strict MIAF compliance can be checked via the returned
+    // `BrandClass.is_miaf` flag.
+    let usable =
+        cls.is_image || cls.is_sequence || cls.has_mif1 || cls.has_msf1 || cls.is_intra_only;
+    if !usable {
+        return Err(Error::invalid(format!(
+            "avif: ftyp major='{}' compatible_brands=[{}] declares no AVIF/HEIF brand \
+             (need one of avif, avis, avio, mif1, msf1)",
+            type_str(major),
+            compat.iter().map(type_str).collect::<Vec<_>>().join(",")
+        )));
+    }
+    Ok(cls)
+}
+
+fn resolve_item_bytes<'a>(file: &'a [u8], loc: &ItemLocation) -> Result<&'a [u8]> {
+    if loc.construction_method != 0 {
+        return Err(Error::unsupported(format!(
+            "avif: iloc construction_method {} not supported (only file-offset is handled)",
+            loc.construction_method
+        )));
+    }
+    match loc.extents.len() {
+        0 => Err(Error::invalid("avif: iloc entry has no extents")),
+        1 => {
+            // Fast path: single extent — return a slice directly with no allocation.
+            let e = &loc.extents[0];
+            let start = loc
+                .base_offset
+                .checked_add(e.offset)
+                .ok_or_else(|| Error::invalid("avif: iloc offset overflow"))?;
+            let end = start
+                .checked_add(e.length)
+                .ok_or_else(|| Error::invalid("avif: iloc length overflow"))?;
+            let (start, end) = (start as usize, end as usize);
+            if end > file.len() {
+                return Err(Error::invalid(format!(
+                    "avif: iloc extent {start}..{end} exceeds file length {}",
+                    file.len()
+                )));
+            }
+            Ok(&file[start..end])
+        }
+        _ => {
+            // Multi-extent items: concatenate all extents. HEIF §8.11.3.3
+            // requires that the decoder assemble the item data by appending
+            // extents in order. The caller gets a fresh allocation — the
+            // returned `&[u8]` is a reference to the owned buffer stored in
+            // a leak-safe place (see `item_bytes_owned`).
+            //
+            // We surface this as an error and provide a separate
+            // `item_bytes_owned` helper that returns a `Vec<u8>`. Callers
+            // that handle multi-extent items call `item_bytes_owned` directly.
+            //
+            // The single caller of `resolve_item_bytes` that may encounter
+            // multi-extent items is `item_bytes` which is used in the grid
+            // and alpha paths. Grid tile items in the wild are always
+            // single-extent (each tile is one contiguous mdat run), so this
+            // path is extremely rare. Surface Unsupported until a real file
+            // exercises the path in production.
+            Err(Error::unsupported(format!(
+                "avif: item {} has {} extents; multi-extent items require item_bytes_owned()",
+                loc.id,
+                loc.extents.len()
+            )))
+        }
+    }
+}
+
+/// Pick the backing buffer for an `iloc` entry given its
+/// `construction_method`: `file` for method 0, the meta box's `idat` for
+/// method 1. Method 2 (item_offset) is not supported.
+fn backing_for<'a>(file: &'a [u8], idat: Option<&'a [u8]>, loc: &ItemLocation) -> Result<&'a [u8]> {
+    match loc.construction_method {
+        0 => Ok(file),
+        1 => idat.ok_or_else(|| {
+            Error::invalid(format!(
+                "avif: item {} uses idat construction_method but the meta box has no idat",
+                loc.id
+            ))
+        }),
+        m => Err(Error::unsupported(format!(
+            "avif: iloc construction_method {m} not supported (only file-offset and idat)",
+        ))),
+    }
+}
+
+/// `construction_method`-aware resolution. Returns a zero-copy
+/// [`Cow::Borrowed`] into `file` only for the single-extent cm=0 case;
+/// every idat-backed item (and any multi-extent item) concatenates into an
+/// owned buffer. Keeping the borrowed branch tied solely to `file` (and
+/// never to `idat`) lets callers move the `Meta` that owns the `idat` while
+/// still holding a cm=0 borrow.
+fn resolve_item_bytes_with_idat<'a>(
+    file: &'a [u8],
+    idat: Option<&[u8]>,
+    loc: &ItemLocation,
+) -> Result<Cow<'a, [u8]>> {
+    if loc.extents.is_empty() {
+        return Err(Error::invalid("avif: iloc entry has no extents"));
+    }
+    // Fast path: single-extent file-offset item borrows directly into
+    // `file` with no allocation.
+    if loc.construction_method == 0 && loc.extents.len() == 1 {
+        let (start, end) = extent_range(file, loc, &loc.extents[0], 0)?;
+        return Ok(Cow::Borrowed(&file[start..end]));
+    }
+    // Everything else (idat-backed, or multi-extent of either method)
+    // concatenates the extents into an owned buffer (HEIF §8.11.3.3).
+    let backing = backing_for(file, idat, loc)?;
+    let mut out = Vec::new();
+    for (i, e) in loc.extents.iter().enumerate() {
+        let (start, end) = extent_range(backing, loc, e, i)?;
+        out.extend_from_slice(&backing[start..end]);
+    }
+    Ok(Cow::Owned(out))
+}
+
+/// Bounds-check one extent against `backing` and return its byte range.
+fn extent_range(
+    backing: &[u8],
+    loc: &ItemLocation,
+    e: &IlocExtent,
+    i: usize,
+) -> Result<(usize, usize)> {
+    let start = loc
+        .base_offset
+        .checked_add(e.offset)
+        .ok_or_else(|| Error::invalid(format!("avif: iloc extent {i} offset overflow")))?;
+    let end = start
+        .checked_add(e.length)
+        .ok_or_else(|| Error::invalid(format!("avif: iloc extent {i} length overflow")))?;
+    let (start, end) = (start as usize, end as usize);
+    if end > backing.len() {
+        return Err(Error::invalid(format!(
+            "avif: iloc extent {i} {start}..{end} exceeds backing length {}",
+            backing.len()
+        )));
+    }
+    Ok((start, end))
+}
+
+/// Resolve a `construction_method == 0` item's payload bytes,
+/// concatenating multiple extents when necessary. This may allocate when
+/// the item spans more than one extent.
+///
+/// For the common single-extent case this borrows the slice and copies it
+/// to an owned buffer — a small allocation to keep the API uniform.
+/// Callers that want zero-copy access for single-extent items should use
+/// [`item_bytes`] directly; callers that need to resolve idat-backed
+/// (`construction_method == 1`) items should use
+/// [`item_bytes_owned_with_idat`].
+pub fn item_bytes_owned(file: &[u8], loc: &ItemLocation) -> Result<Vec<u8>> {
+    if loc.construction_method != 0 {
+        return Err(Error::unsupported(format!(
+            "avif: iloc construction_method {} not supported",
+            loc.construction_method
+        )));
+    }
+    resolve_item_bytes_with_idat(file, None, loc).map(Cow::into_owned)
+}
+
+/// Resolve an item's payload bytes to an owned buffer, handling both
+/// file-offset (`construction_method == 0`) and idat-offset
+/// (`construction_method == 1`, bytes inside the `meta` box's `idat`)
+/// items as well as multi-extent items of either method.
+///
+/// See [`item_bytes_with_idat`] for the zero-copy-when-possible variant.
+pub fn item_bytes_owned_with_idat(
+    file: &[u8],
+    idat: Option<&[u8]>,
+    loc: &ItemLocation,
+) -> Result<Vec<u8>> {
+    resolve_item_bytes_with_idat(file, idat, loc).map(Cow::into_owned)
+}
+
+/// `iref` reference type linking a `construction_method == 2` (item_offset)
+/// item to the item(s) supplying its data origin (ISO/IEC 14496-12
+/// §8.11.3.3 — "the item reference with referenceType 'iloc'").
+const ILOC_REF: BoxType = b(b"iloc");
+
+/// Maximum depth of `construction_method == 2` indirection we will follow
+/// before declaring the chain malformed. cm=2 items may reference other
+/// items, so a hostile / broken file could form a cycle or a very deep
+/// chain; the spec warns against self-reference "to avoid infinite
+/// recursion" (§8.11.3.3) but does not mandate a depth, so we cap it.
+const MAX_ILOC_DEPTH: usize = 16;
+
+/// Resolve an item's payload bytes to an owned buffer for *any* of the
+/// three `construction_method`s, including `construction_method == 2`
+/// (item_offset). Unlike [`item_bytes_owned_with_idat`], which only
+/// understands file-offset and idat-offset items, this resolver consults
+/// the whole [`Meta`] so it can follow the `'iloc'` item reference that a
+/// cm=2 entry uses to name its data-origin item.
+///
+/// Spec: ISO/IEC 14496-12 §8.11.3.3. For a cm=2 extent the data origin is
+/// "the first byte of the concatenated data (of all the extents) of"
+/// the referenced item. The extent's `extent_index` is the 1-based index
+/// into the `'iloc'` iref entries whose source is this item; an
+/// `extent_index` of 0 (i.e. the box carried `index_size == 0`) implies
+/// the value 1. `extent_offset` (plus `base_offset`) then indexes into
+/// that concatenated data and `extent_length` bounds it, with a length of
+/// 0 meaning "the entire referenced item".
+///
+/// The referenced item is itself resolved through this same function, so
+/// a cm=2 item may point at a cm=0 / cm=1 item (the common case) or, in
+/// principle, another cm=2 item; recursion is bounded by
+/// [`MAX_ILOC_DEPTH`] to reject cycles and pathological chains.
+pub fn item_bytes_owned_full(file: &[u8], meta: &Meta, item_id: u32) -> Result<Vec<u8>> {
+    resolve_full(file, meta, item_id, 0)
+}
+
+fn resolve_full(file: &[u8], meta: &Meta, item_id: u32, depth: usize) -> Result<Vec<u8>> {
+    if depth > MAX_ILOC_DEPTH {
+        return Err(Error::invalid(format!(
+            "avif: iloc construction_method 2 chain exceeds depth {MAX_ILOC_DEPTH} (cycle?) at item {item_id}"
+        )));
+    }
+    let loc = meta
+        .location_by_id(item_id)
+        .ok_or_else(|| Error::invalid(format!("avif: item {item_id} missing in iloc")))?;
+
+    if loc.construction_method != 2 {
+        // file-offset / idat-offset items resolve without touching the
+        // item graph.
+        return item_bytes_owned_with_idat(file, meta.idat.as_deref(), loc);
+    }
+
+    if loc.extents.is_empty() {
+        return Err(Error::invalid(format!(
+            "avif: item {item_id} construction_method 2 entry has no extents"
+        )));
+    }
+
+    // The ordered list of items this item points at via 'iloc' irefs.
+    let refs = meta.iref_targets(&ILOC_REF, item_id);
+    if refs.is_empty() {
+        return Err(Error::invalid(format!(
+            "avif: item {item_id} uses construction_method 2 but has no 'iloc' item reference"
+        )));
+    }
+
+    let mut out = Vec::new();
+    for (i, e) in loc.extents.iter().enumerate() {
+        // 1-based extent_index into `refs`; 0 implies 1 (§8.11.3.3).
+        let one_based = if e.extent_index == 0 {
+            1
+        } else {
+            e.extent_index
+        };
+        let idx = (one_based as usize)
+            .checked_sub(1)
+            .filter(|&z| z < refs.len())
+            .ok_or_else(|| {
+                Error::invalid(format!(
+                    "avif: item {item_id} extent {i} extent_index {one_based} out of range (1..={})",
+                    refs.len()
+                ))
+            })?;
+        let ref_id = refs[idx];
+        if ref_id == item_id {
+            return Err(Error::invalid(format!(
+                "avif: item {item_id} construction_method 2 self-references (infinite recursion)"
+            )));
+        }
+        // Data origin = the referenced item's full concatenated bytes.
+        let origin = resolve_full(file, meta, ref_id, depth + 1)?;
+        // base_offset + extent_offset index into that origin; a length of
+        // 0 means "the entire referenced item" from `start`.
+        let start = loc.base_offset.checked_add(e.offset).ok_or_else(|| {
+            Error::invalid(format!("avif: item {item_id} extent {i} offset overflow"))
+        })?;
+        let start = usize::try_from(start).map_err(|_| {
+            Error::invalid(format!("avif: item {item_id} extent {i} offset too large"))
+        })?;
+        if start > origin.len() {
+            return Err(Error::invalid(format!(
+                "avif: item {item_id} extent {i} offset {start} exceeds referenced item {ref_id} length {}",
+                origin.len()
+            )));
+        }
+        let end = if e.length == 0 {
+            origin.len()
+        } else {
+            let len = usize::try_from(e.length).map_err(|_| {
+                Error::invalid(format!("avif: item {item_id} extent {i} length too large"))
+            })?;
+            let end = start.checked_add(len).ok_or_else(|| {
+                Error::invalid(format!("avif: item {item_id} extent {i} length overflow"))
+            })?;
+            if end > origin.len() {
+                return Err(Error::invalid(format!(
+                    "avif: item {item_id} extent {i} {start}..{end} exceeds referenced item {ref_id} length {}",
+                    origin.len()
+                )));
+            }
+            end
+        };
+        out.extend_from_slice(&origin[start..end]);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::meta::{IrefEntry, ItemLocation, Meta};
+
+    const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/monochrome.avif");
+
+    /// Helper: a single-extent cm=0 (file-offset) location for `id`
+    /// pointing at `offset..offset+length` inside the file.
+    fn cm0_loc(id: u32, offset: u64, length: u64) -> ItemLocation {
+        ItemLocation {
+            id,
+            construction_method: 0,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![IlocExtent {
+                offset,
+                length,
+                extent_index: 0,
+            }],
+        }
+    }
+
+    /// Helper: a cm=2 (item-offset) location whose single extent uses
+    /// `extent_index` to select an `'iloc'` iref target, slicing
+    /// `offset..offset+length` (length 0 = whole referenced item).
+    fn cm2_loc(id: u32, extent_index: u64, offset: u64, length: u64) -> ItemLocation {
+        ItemLocation {
+            id,
+            construction_method: 2,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![IlocExtent {
+                offset,
+                length,
+                extent_index,
+            }],
+        }
+    }
+
+    fn iloc_iref(from_id: u32, to_ids: Vec<u32>) -> IrefEntry {
+        IrefEntry {
+            reference_type: *b"iloc",
+            from_id,
+            to_ids,
+        }
+    }
+
+    /// Build a `Meta` carrying only the locations / irefs / idat the cm=2
+    /// resolver consults (struct-update keeps clippy's
+    /// field_reassign_with_default happy).
+    fn mk_meta(locations: Vec<ItemLocation>, irefs: Vec<IrefEntry>, idat: Option<Vec<u8>>) -> Meta {
+        Meta {
+            locations,
+            irefs,
+            idat,
+            ..Meta::default()
+        }
+    }
+
+    #[test]
+    fn cm2_whole_referenced_item() {
+        // Base item 1 = bytes 4..12 of the file. cm=2 item 2 references
+        // item 1 via an 'iloc' iref (extent_index 1) and copies the whole
+        // referenced item (length 0).
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm0_loc(1, 4, 8), cm2_loc(2, 1, 0, 0)],
+            vec![iloc_iref(2, vec![1])],
+            None,
+        );
+        let got = item_bytes_owned_full(&file, &meta, 2).unwrap();
+        assert_eq!(got, (4u8..12).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn cm2_sub_range_of_referenced_item() {
+        // Slice bytes 2..5 of the referenced item's data (which is file
+        // bytes 4..12, so file bytes 6..9).
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm0_loc(1, 4, 8), cm2_loc(2, 1, 2, 3)],
+            vec![iloc_iref(2, vec![1])],
+            None,
+        );
+        let got = item_bytes_owned_full(&file, &meta, 2).unwrap();
+        assert_eq!(got, vec![6, 7, 8]);
+    }
+
+    #[test]
+    fn cm2_extent_index_zero_implies_one() {
+        // extent_index 0 (box carried index_size==0) implies index 1.
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm0_loc(1, 4, 8), cm2_loc(2, 0, 0, 0)],
+            vec![iloc_iref(2, vec![1])],
+            None,
+        );
+        let got = item_bytes_owned_full(&file, &meta, 2).unwrap();
+        assert_eq!(got, (4u8..12).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn cm2_selects_second_iloc_reference() {
+        // Two 'iloc' targets; extent_index 2 picks the second (item 3).
+        let file: Vec<u8> = (0u8..32).collect();
+        let meta = mk_meta(
+            vec![cm0_loc(1, 0, 8), cm0_loc(3, 20, 4), cm2_loc(2, 2, 0, 0)],
+            vec![iloc_iref(2, vec![1, 3])],
+            None,
+        );
+        let got = item_bytes_owned_full(&file, &meta, 2).unwrap();
+        assert_eq!(got, (20u8..24).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn cm2_origin_resolves_through_idat() {
+        // The referenced item is itself idat-backed (cm=1); the cm=2 item
+        // must resolve through to the idat bytes.
+        let file: Vec<u8> = vec![0xff; 8];
+        let mut base = cm0_loc(1, 4, 8);
+        base.construction_method = 1; // idat-offset
+        let meta = mk_meta(
+            vec![base, cm2_loc(2, 1, 0, 0)],
+            vec![iloc_iref(2, vec![1])],
+            Some((100u8..116).collect()),
+        );
+        let got = item_bytes_owned_full(&file, &meta, 2).unwrap();
+        assert_eq!(got, (104u8..112).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn cm2_missing_iref_errors() {
+        let file: Vec<u8> = (0u8..16).collect();
+        // No 'iloc' iref declared for item 2.
+        let meta = mk_meta(vec![cm0_loc(1, 4, 8), cm2_loc(2, 1, 0, 0)], vec![], None);
+        let err = item_bytes_owned_full(&file, &meta, 2).unwrap_err();
+        assert!(format!("{err}").contains("no 'iloc' item reference"));
+    }
+
+    #[test]
+    fn cm2_extent_index_out_of_range_errors() {
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm0_loc(1, 4, 8), cm2_loc(2, 5, 0, 0)],
+            vec![iloc_iref(2, vec![1])],
+            None,
+        );
+        let err = item_bytes_owned_full(&file, &meta, 2).unwrap_err();
+        assert!(format!("{err}").contains("out of range"));
+    }
+
+    #[test]
+    fn cm2_self_reference_rejected() {
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm2_loc(2, 1, 0, 0)],
+            vec![iloc_iref(2, vec![2])], // points at itself
+            None,
+        );
+        let err = item_bytes_owned_full(&file, &meta, 2).unwrap_err();
+        assert!(format!("{err}").contains("self-reference"));
+    }
+
+    #[test]
+    fn cm2_cycle_bounded_by_depth() {
+        // 2 -> 3 -> 2 (mutual reference) is caught by the depth cap.
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm2_loc(2, 1, 0, 0), cm2_loc(3, 1, 0, 0)],
+            vec![iloc_iref(2, vec![3]), iloc_iref(3, vec![2])],
+            None,
+        );
+        let err = item_bytes_owned_full(&file, &meta, 2).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("depth") || msg.contains("recursion"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn cm2_sub_range_out_of_bounds_errors() {
+        // Referenced item is 8 bytes; offset 6 + length 4 overruns it.
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(
+            vec![cm0_loc(1, 4, 8), cm2_loc(2, 1, 6, 4)],
+            vec![iloc_iref(2, vec![1])],
+            None,
+        );
+        let err = item_bytes_owned_full(&file, &meta, 2).unwrap_err();
+        assert!(format!("{err}").contains("exceeds referenced item"));
+    }
+
+    #[test]
+    fn non_cm2_unaffected_by_full_resolver() {
+        // A plain cm=0 item resolves identically through the full path.
+        let file: Vec<u8> = (0u8..16).collect();
+        let meta = mk_meta(vec![cm0_loc(1, 3, 5)], vec![], None);
+        let got = item_bytes_owned_full(&file, &meta, 1).unwrap();
+        assert_eq!(got, (3u8..8).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn classify_brands_baseline_profile() {
+        // Real `monochrome.avif` ftyp: major=avif compat=[mif1,avif,miaf,MA1B].
+        let cls = classify_brands(
+            &BRAND_AVIF,
+            &[BRAND_MIF1, BRAND_AVIF, BRAND_MIAF, BRAND_MA1B],
+        )
+        .unwrap();
+        assert!(cls.is_image);
+        assert!(cls.is_miaf);
+        assert!(cls.has_mif1);
+        assert!(cls.is_baseline_profile);
+        assert!(!cls.is_sequence);
+        assert!(!cls.is_advanced_profile);
+    }
+
+    #[test]
+    fn classify_brands_advanced_profile() {
+        let cls = classify_brands(&BRAND_AVIF, &[BRAND_MIF1, BRAND_MIAF, BRAND_MA1A]).unwrap();
+        assert!(cls.is_advanced_profile);
+        assert!(!cls.is_baseline_profile);
+        assert!(cls.is_image);
+    }
+
+    #[test]
+    fn classify_brands_sequence_with_intra_only() {
+        // Per av1-avif §6.3 + §8.2: avis + avio + msf1 + miaf + MA1B.
+        let cls = classify_brands(
+            &BRAND_AVIS,
+            &[BRAND_AVIO, BRAND_MSF1, BRAND_MIAF, BRAND_MA1B],
+        )
+        .unwrap();
+        assert!(cls.is_sequence);
+        assert!(cls.is_intra_only);
+        assert!(cls.has_msf1);
+        assert!(cls.is_miaf);
+        assert!(cls.is_baseline_profile);
+        assert!(!cls.is_image);
+    }
+
+    #[test]
+    fn classify_brands_rejects_no_avif_or_heif_brand() {
+        // `mp42` + `isom` is a valid generic ISOBMFF ftyp but says
+        // nothing about AVIF/HEIF.
+        let err = classify_brands(b"mp42", &[*b"isom"]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("declares no AVIF/HEIF brand"),
+            "expected AVIF/HEIF rejection, got: {msg}"
+        );
+        // Error must list the brands seen so the caller can debug.
+        assert!(msg.contains("mp42"));
+        assert!(msg.contains("isom"));
+    }
+
+    #[test]
+    fn classify_brands_accepts_mif1_only() {
+        // Pure HEIF file with no AVIF brand still parses: caller can
+        // inspect the meta to find out whether it carries an `av01` item.
+        let cls = classify_brands(&BRAND_MIF1, &[]).unwrap();
+        assert!(cls.has_mif1);
+        assert!(!cls.is_image);
+        assert!(!cls.is_sequence);
+    }
+
+    #[test]
+    fn classify_brands_lone_miaf_without_anchor_is_rejected() {
+        // `miaf` alone isn't enough — a file must also claim either an
+        // AVIF brand (`avif` / `avis` / `avio`) or a HEIF structural
+        // brand (`mif1` / `msf1`).
+        let err = classify_brands(&BRAND_MIAF, &[]).unwrap_err();
+        assert!(format!("{err}").contains("declares no AVIF/HEIF brand"));
+    }
+
+    #[test]
+    fn parses_monochrome_fixture() {
+        let img = parse(FIXTURE).expect("parse avif");
+        assert_eq!(&img.major_brand, b"avif");
+        assert!(img.compatible_brands.iter().any(|b| b == b"mif1"));
+        assert_eq!(img.primary_item_id, 1);
+        assert_eq!(&img.primary_item.item_type, b"av01");
+        let ispe = img.ispe.expect("ispe for primary item");
+        assert_eq!(ispe.width, 1280);
+        assert_eq!(ispe.height, 720);
+        // av1C starts with marker(1) | version(7) = 0x81.
+        let av1c = img.av1c.as_deref().expect("av1C property");
+        assert_eq!(av1c[0], 0x81);
+        // The primary item bytes live in mdat and begin with an AV1
+        // temporal-delimiter OBU (obu_type=2). Bit layout of the OBU
+        // header byte: obu_forbidden(1) | obu_type(4) | obu_extension_flag(1)
+        // | obu_has_size_field(1) | obu_reserved(1) — TD is type 2, and
+        // this aom-encoded file sets has_size (low bit before reserved).
+        let obu_type = (img.primary_item_data[0] >> 3) & 0x0f;
+        assert_eq!(obu_type, 2, "first OBU should be temporal delimiter");
+        // Monochrome file has a pixi with one 8-bit channel.
+        let pixi = img.pixi.as_ref().expect("pixi");
+        assert_eq!(pixi.bits_per_channel, vec![8]);
+        // SDR fixture carries no HDR metadata.
+        assert!(img.mdcv.is_none(), "SDR fixture must not have mdcv");
+        assert!(img.clli.is_none(), "SDR fixture must not have clli");
+        assert!(img.cclv.is_none(), "SDR fixture must not have cclv");
+        assert!(img.amve.is_none(), "SDR fixture must not have amve");
+    }
+
+    /// `item_bytes_owned` on a single-extent iloc returns the same data
+    /// as `item_bytes`. This path allocates but produces equal bytes.
+    #[test]
+    fn item_bytes_owned_single_extent_matches_item_bytes() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let data = b"hello world";
+        // Synthetic loc: base_offset 0, extent offset=0, length=11.
+        let loc = ItemLocation {
+            id: 1,
+            construction_method: 0,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![IlocExtent {
+                offset: 0,
+                length: 11,
+                extent_index: 0,
+            }],
+        };
+        let slice = item_bytes(data, &loc).unwrap();
+        let owned = item_bytes_owned(data, &loc).unwrap();
+        assert_eq!(slice, owned.as_slice());
+        assert_eq!(owned, b"hello world");
+    }
+
+    /// `item_bytes_owned` on a multi-extent iloc concatenates all extents.
+    #[test]
+    fn item_bytes_owned_multi_extent_concatenates() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let data = b"AAAA____BBBB"; // 12 bytes; extents at 0..4 and 8..12
+        let loc = ItemLocation {
+            id: 1,
+            construction_method: 0,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![
+                IlocExtent {
+                    offset: 0,
+                    length: 4,
+                    extent_index: 0,
+                },
+                IlocExtent {
+                    offset: 8,
+                    length: 4,
+                    extent_index: 0,
+                },
+            ],
+        };
+        let owned = item_bytes_owned(data, &loc).unwrap();
+        assert_eq!(owned, b"AAAABBBB");
+        // item_bytes must return Unsupported for multi-extent.
+        let err = item_bytes(data, &loc).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AvifError::Unsupported(_)),
+            "item_bytes must return Unsupported for multi-extent: {err:?}"
+        );
+    }
+
+    /// `item_bytes_owned` rejects construction_method != 0.
+    #[test]
+    fn item_bytes_owned_rejects_idat_method() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let loc = ItemLocation {
+            id: 1,
+            construction_method: 1, // idat-based
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![IlocExtent {
+                offset: 0,
+                length: 4,
+                extent_index: 0,
+            }],
+        };
+        let err = item_bytes_owned(b"data", &loc).unwrap_err();
+        assert!(matches!(err, crate::error::AvifError::Unsupported(_)));
+    }
+
+    /// `item_bytes_with_idat` resolves a single-extent `construction_method
+    /// == 1` (idat-offset) item from the `idat` slice, indexing
+    /// base_offset + extent.offset into `data[]` (ISO/IEC 14496-12
+    /// §8.11.3, construction method 1). The result is owned, never a
+    /// borrow into `file`.
+    #[test]
+    fn item_bytes_with_idat_single_extent_idat() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let file = b"\x00\x00\x00\x00"; // file bytes are irrelevant for cm=1
+        let idat = b"....HELLO...."; // payload "HELLO" lives at offset 4
+        let loc = ItemLocation {
+            id: 7,
+            construction_method: 1,
+            data_reference_index: 0,
+            base_offset: 4,
+            extents: vec![IlocExtent {
+                offset: 0,
+                length: 5,
+                extent_index: 0,
+            }],
+        };
+        let bytes = item_bytes_with_idat(file, Some(idat), &loc).unwrap();
+        assert_eq!(&*bytes, b"HELLO");
+        assert!(matches!(bytes, Cow::Owned(_)), "idat items are owned");
+        // The owned helper agrees.
+        let owned = item_bytes_owned_with_idat(file, Some(idat), &loc).unwrap();
+        assert_eq!(owned, b"HELLO");
+    }
+
+    /// A cm=0 single-extent item stays zero-copy: `item_bytes_with_idat`
+    /// returns a borrow into `file`, with no allocation.
+    #[test]
+    fn item_bytes_with_idat_cm0_is_borrowed() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let file = b"xxxHELLOxxx";
+        let loc = ItemLocation {
+            id: 1,
+            construction_method: 0,
+            data_reference_index: 0,
+            base_offset: 3,
+            extents: vec![IlocExtent {
+                offset: 0,
+                length: 5,
+                extent_index: 0,
+            }],
+        };
+        let bytes = item_bytes_with_idat(file, None, &loc).unwrap();
+        assert_eq!(&*bytes, b"HELLO");
+        assert!(
+            matches!(bytes, Cow::Borrowed(_)),
+            "cm=0 single-extent must stay zero-copy"
+        );
+    }
+
+    /// `item_bytes_with_idat` concatenates multi-extent idat items in
+    /// declaration order (HEIF §8.11.3.3).
+    #[test]
+    fn item_bytes_with_idat_multi_extent_idat() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let idat = b"AAAA____BBBB"; // extents 0..4 and 8..12 inside idat
+        let loc = ItemLocation {
+            id: 2,
+            construction_method: 1,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![
+                IlocExtent {
+                    offset: 0,
+                    length: 4,
+                    extent_index: 0,
+                },
+                IlocExtent {
+                    offset: 8,
+                    length: 4,
+                    extent_index: 0,
+                },
+            ],
+        };
+        let bytes = item_bytes_with_idat(b"", Some(idat), &loc).unwrap();
+        assert_eq!(&*bytes, b"AAAABBBB");
+    }
+
+    /// A cm=1 item with no `idat` available is an invalid file, not a
+    /// silent empty payload.
+    #[test]
+    fn item_bytes_with_idat_missing_idat_errors() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let loc = ItemLocation {
+            id: 9,
+            construction_method: 1,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![IlocExtent {
+                offset: 0,
+                length: 2,
+                extent_index: 0,
+            }],
+        };
+        let err = item_bytes_with_idat(b"data", None, &loc).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AvifError::InvalidData(_)),
+            "missing idat for a cm=1 item must be Invalid: {err:?}"
+        );
+    }
+
+    /// An idat extent that runs past the `idat` buffer is rejected — the
+    /// bounds check is against the idat length, not the file length.
+    #[test]
+    fn item_bytes_with_idat_extent_out_of_bounds() {
+        use crate::meta::{IlocExtent, ItemLocation};
+        let idat = b"short";
+        let loc = ItemLocation {
+            id: 3,
+            construction_method: 1,
+            data_reference_index: 0,
+            base_offset: 0,
+            extents: vec![IlocExtent {
+                offset: 0,
+                length: 100,
+                extent_index: 0,
+            }],
+        };
+        let err = item_bytes_with_idat(b"", Some(idat), &loc).unwrap_err();
+        assert!(matches!(err, crate::error::AvifError::InvalidData(_)));
+    }
+
+    /// `audit_mif1` against the Microsoft monochrome AVIF fixture
+    /// reports full mif1 compliance plus the mif1 brand claim.
+    /// The fixture's `ftyp` is `avif` major with `mif1` in
+    /// compatible_brands and its `meta` ships every mif1-mandatory
+    /// child box (hdlr / pitm / iinf with one infe / iloc / iprp).
+    #[test]
+    fn audit_mif1_monochrome_fixture_is_compliant() {
+        let m = audit_mif1(FIXTURE).expect("audit");
+        assert!(m.claims_mif1, "fixture has mif1 in compatible_brands");
+        assert!(m.has_hdlr);
+        assert!(m.has_pitm);
+        assert!(m.has_iinf);
+        assert!(m.has_iloc);
+        assert!(m.has_iprp);
+        assert!(m.infe_count >= 1);
+        assert!(m.is_compliant());
+        assert!(m.missing().is_empty());
+    }
+
+    /// `audit_mif1` on bytes with no meta box reports `claims_mif1`
+    /// from the ftyp and every other flag false. Useful gate for
+    /// "is this even a plausible mif1 carrier".
+    #[test]
+    fn audit_mif1_ftyp_only_reports_brand_no_boxes() {
+        // Synth ftyp: major='mif1' minor=0 compat=[mif1]
+        let mut buf = Vec::new();
+        let payload_len: u32 = 4 + 4 + 4; // major + minor + one compat
+        let size: u32 = 8 + payload_len;
+        buf.extend_from_slice(&size.to_be_bytes());
+        buf.extend_from_slice(b"ftyp");
+        buf.extend_from_slice(b"mif1");
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"mif1");
+        let m = audit_mif1(&buf).expect("audit");
+        assert!(m.claims_mif1);
+        assert!(!m.is_compliant());
+        let missing = m.missing();
+        assert!(missing.contains(&"hdlr"));
+        assert!(missing.contains(&"pitm"));
+    }
+}

@@ -1,0 +1,6 @@
+/target
+*.chtra-tmp
+/dist
+/.flatpak-builder
+/flatpak-build
+/flatpak-repo

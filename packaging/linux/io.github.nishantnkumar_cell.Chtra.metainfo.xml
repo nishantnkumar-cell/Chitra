@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.nishantnkumar_cell.Chtra</id>
+  <name>Chtra</name>
+  <summary>View photos and convert them in batches</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <developer id="io.github.nishantnkumar_cell">
+    <name>Nishant</name>
+  </developer>
+  <description>
+    <p>
+      Chtra is a fast, small photo viewer and batch converter. It opens JPEG,
+      JPEG XL, PNG, GIF, BMP, WebP, AVIF and HEIC photos and converts whole
+      folders between them, with resizing and renaming.
+    </p>
+    <ul>
+      <li>Zoom, pan, rotate, slideshow and a thumbnail browser</li>
+      <li>Batch conversion to JPEG, JPEG XL, PNG, GIF, BMP, WebP and AVIF</li>
+      <li>Keeps EXIF data and colour profiles</li>
+      <li>Follows the light or dark style of your desktop</li>
+      <li>Works offline: no network access, no telemetry</li>
+    </ul>
+    <p>
+      Every decoder is written in memory-safe Rust, including the HEIC and
+      AVIF decoders.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.nishantnkumar_cell.Chtra.desktop</launchable>
+  <url type="homepage">https://github.com/nishantnkumar-cell/Chitra</url>
+  <url type="bugtracker">https://github.com/nishantnkumar-cell/Chitra/issues</url>
+  <url type="vcs-browser">https://github.com/nishantnkumar-cell/Chitra</url>
+  <provides>
+    <binary>chtra</binary>
+    <binary>chtra-cli</binary>
+  </provides>
+  <categories>
+    <category>Graphics</category>
+    <category>Viewer</category>
+  </categories>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <branding>
+    <color type="primary" scheme_preference="light">#f6e7ef</color>
+    <color type="primary" scheme_preference="dark">#3b1f3a</color>
+  </branding>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-17"/>
+  </releases>
+</component>

@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Size budget for the Windows exe, in bytes (18 MiB). HEIC and AVIF add
+  # about 2.3 MB and unwinding for per-file crash isolation about 2.7 MB.
+  MAX_EXE_BYTES: 18874368
+
+# Read-only token by default; only the release job may write.
+permissions:
+  contents: read
+
+# Third-party actions are pinned to commit SHAs so a moved tag cannot change
+# what runs here.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+  # Known vulnerabilities, yanked crates, crates from outside crates.io and
+  # banned networking/TLS crates fail the build (see deny.toml).
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check advisories bans sources
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # jxl-encoder's SIMD crate does not build on Apple Silicon yet, so macOS
+      # tests the lossless-only build.
+      - if: runner.os != 'macOS'
+        run: cargo test
+      - run: cargo test --no-default-features
+
+  windows-release:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      # Tagged release builds start clean rather than from a cache.
+      - if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release
+      - name: Build exe
+        run: |
+          cargo build --release
+          Copy-Item target/release/chtra.exe chtra.exe
+          Copy-Item target/release/chtra-cli.exe chtra-cli.exe
+      - name: Check size and smoke-test the CLI
+        shell: pwsh
+        run: |
+          $size = (Get-Item chtra.exe).Length
+          $cli = (Get-Item chtra-cli.exe).Length
+          # As annotations, so the sizes show on the pull request page.
+          Write-Host "::notice title=Exe size::chtra.exe $([math]::Round($size / 1MB, 2)) MiB, chtra-cli.exe $([math]::Round($cli / 1MB, 2)) MiB"
+          if ($size -gt [int]$env:MAX_EXE_BYTES) { throw "chtra.exe exceeds the size budget" }
+          ./chtra-cli.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "chtra-cli --version failed" }
+      - name: Check exploit mitigations (ASLR, DEP, Control Flow Guard)
+        shell: pwsh
+        run: |
+          foreach ($exe in 'chtra.exe', 'chtra-cli.exe') {
+            $b = [IO.File]::ReadAllBytes((Resolve-Path $exe))
+            $pe = [BitConverter]::ToInt32($b, 0x3C)
+            # DllCharacteristics sits 70 bytes into the PE32+ optional header.
+            $dc = [BitConverter]::ToUInt16($b, $pe + 24 + 70)
+            $need = @{ DYNAMIC_BASE = 0x40; HIGH_ENTROPY_VA = 0x20; NX_COMPAT = 0x100; GUARD_CF = 0x4000 }
+            foreach ($k in $need.Keys) {
+              if (($dc -band $need[$k]) -eq 0) { throw "$exe is missing $k" }
+            }
+            Write-Host ("{0}: DllCharacteristics 0x{1:X4} ok" -f $exe, $dc)
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chtra-windows-x64
+          path: |
+            chtra.exe
+            chtra-cli.exe
+            README.md
+            LICENSE
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "could not install Inno Setup" }
+          }
+          & $iscc /Qp "/DAppVersion=$version" installer\chtra.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem dist | ForEach-Object { Write-Host "$($_.Name) is $([math]::Round($_.Length / 1MB, 2)) MB" }
+      - name: Install, check and uninstall
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist\Chtra-Setup-*.exe).FullName
+          $p = Start-Process $setup -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER'
+          if ($p.ExitCode -ne 0) { throw "setup exited with $($p.ExitCode)" }
+          $app = "$env:LOCALAPPDATA\Programs\Chtra"
+          & "$app\chtra-cli.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "installed chtra-cli does not run" }
+          foreach ($f in 'chtra.exe', 'LICENSE-AGPL-3.0.txt', 'NOTICE.txt') {
+            if (-not (Test-Path "$app\$f")) { throw "$f was not installed" }
+          }
+          $openWith = Get-ItemProperty 'HKCU:\Software\Classes\.jxl\OpenWithProgids'
+          if ($null -eq $openWith.'Chtra.Image') { throw "Open with entry for .jxl missing" }
+          $openWith = Get-ItemProperty 'HKCU:\Software\Classes\.heic\OpenWithProgids'
+          if ($null -eq $openWith.'Chtra.Image') { throw "Open with entry for .heic missing" }
+          if (-not (Test-Path 'HKCU:\Software\Classes\Directory\shell\Chtra\command')) { throw "folder menu entry missing" }
+          $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Chtra.lnk"
+          if (-not (Test-Path $menu)) { throw "Start menu shortcut missing" }
+          Start-Process "$app\unins000.exe" -Wait -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          # The uninstaller finishes from a temporary copy, so wait for it.
+          for ($i = 0; $i -lt 60 -and (Test-Path "$app\chtra.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$app\chtra.exe") { throw "uninstall left chtra.exe behind" }
+          if (Test-Path 'HKCU:\Software\Classes\Chtra.Image') { throw "uninstall left the ProgId behind" }
+          Write-Host "Installer installs, registers and uninstalls cleanly"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chtra-windows-installer
+          path: dist/Chtra-Setup-*.exe
+
+  # Linux tarball and Flatpak for current KDE Plasma and GNOME.
+  linux-release:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream flatpak flatpak-builder dbus-user-session
+      - name: Check the menu entry and software-centre metadata
+        run: |
+          desktop-file-validate packaging/linux/*.desktop
+          appstreamcli validate --no-net packaging/linux/*.metainfo.xml
+      - name: Build and pack the tarball
+        run: |
+          cargo build --release
+          ls -l target/release/chtra target/release/chtra-cli
+          sh tools/package_linux.sh
+      - name: Install, run and uninstall the tarball
+        run: |
+          mkdir t
+          tar -C t -xzf dist/chtra-*-linux-x86_64.tar.gz
+          PREFIX="$PWD/t/prefix" t/chtra-*/install.sh
+          t/prefix/bin/chtra-cli --version
+          t/prefix/bin/chtra-cli convert tests/data/pattern.heic --to avif --out t/out
+          test -s t/out/pattern.avif
+          PREFIX="$PWD/t/prefix" t/chtra-*/install.sh --uninstall
+          test ! -e t/prefix/bin/chtra
+      - name: Build the Flatpak
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
+            --force-clean --repo=flatpak-repo flatpak-build \
+            packaging/flatpak/io.github.nishantnkumar_cell.Chtra.yml
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            flatpak-repo "dist/Chtra-$VERSION-x86_64.flatpak" io.github.nishantnkumar_cell.Chtra
+      - name: Install and run the Flatpak
+        run: |
+          flatpak install --user -y --noninteractive dist/*.flatpak
+          dbus-run-session -- flatpak run --command=chtra-cli io.github.nishantnkumar_cell.Chtra --version
+          dbus-run-session -- flatpak run --command=chtra-cli io.github.nishantnkumar_cell.Chtra \
+            convert "$PWD/tests/data/pattern.heic" --to png --out "$PWD/t/flatpak"
+          test -s t/flatpak/pattern.png
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chtra-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.flatpak
+
+  # Pushing a tag such as v0.1.0 drafts a GitHub release with the Windows
+  # installer and the Linux packages attached. It stays a draft until someone
+  # publishes it.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-release, linux-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          files: |
+            artifacts/chtra-windows-installer/*.exe
+            artifacts/chtra-windows-x64/chtra.exe
+            artifacts/chtra-windows-x64/chtra-cli.exe
+            artifacts/chtra-linux-x86_64/*

@@ -1,0 +1,13 @@
+# Link the C runtime statically on Windows so the .exe needs no Visual C++
+# redistributable, and turn on Control Flow Guard (CI checks it, with ASLR and
+# DEP, in the release exe).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Linux builds target x86-64-v2 (SSE4.2 and POPCNT: Intel since 2008, AMD since
+# 2011); the codecs pick faster AVX2 paths at run time where available.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v2"]

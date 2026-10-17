@@ -1,0 +1,37 @@
+# cargo-deny: run by CI on every push and pull request.
+#   cargo install cargo-deny --locked && cargo deny check advisories bans sources
+
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+# Any vulnerability, yanked crate or unsound advisory fails the build.
+yanked = "deny"
+# Unmaintained warnings only for direct dependencies. The one indirect hit today
+# is paste (RUSTSEC-2024-0436), a compile-time macro used by rav1e and zenwebp:
+# no code from it ends up in the program.
+unmaintained = "workspace"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+# No C TLS or networking stacks: Chtra never goes online.
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "ureq" },
+    { name = "curl" },
+]
+
+[sources]
+# Only crates.io; the one patched crate lives in vendor/.
+unknown-registry = "deny"
+unknown-git = "deny"
