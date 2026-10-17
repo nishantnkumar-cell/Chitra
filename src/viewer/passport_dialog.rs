@@ -48,6 +48,8 @@ pub struct PassportDialog {
     error: Option<String>,
     crown: Option<(f32, f32)>,
     chin: Option<(f32, f32)>,
+    /// Which marker the next click on the photo places; None once both are set.
+    next_click: Option<Grab>,
     grab: Option<Grab>,
     /// Index into SPECS; SPECS.len() means the custom size below.
     spec: usize,
@@ -77,6 +79,7 @@ impl Default for PassportDialog {
             error: None,
             crown: None,
             chin: None,
+            next_click: Some(Grab::Crown),
             grab: None,
             spec: 0,
             custom_size: (35.0, 45.0),
@@ -110,6 +113,7 @@ impl PassportDialog {
         self.result = None;
         self.crown = None;
         self.chin = None;
+        self.next_click = Some(Grab::Crown);
         self.error = None;
         self.message = None;
         let (tx, rx) = mpsc::channel();
@@ -180,6 +184,7 @@ impl PassportDialog {
                         egui::TextureOptions::LINEAR,
                     );
                     let scale = small.width() as f32 / full.width().max(1) as f32;
+                    self.guess_marks(full.width() as f32, full.height() as f32);
                     self.source = Some(Source {
                         path,
                         full,
@@ -253,11 +258,55 @@ impl PassportDialog {
         });
     }
 
+    /// A starting guess for a typical portrait, so the preview shows the photo
+    /// before anything is marked: head centred, a third of the photo tall.
+    fn guess_marks(&mut self, w: f32, h: f32) {
+        let head = (h / 3.0).min(w * 0.45);
+        self.crown = Some((w / 2.0, h * 0.18));
+        self.chin = Some((w / 2.0, h * 0.18 + head));
+        self.next_click = Some(Grab::Crown);
+        self.result_dirty = true;
+    }
+
     fn hint(&self) -> &'static str {
-        match (self.crown, self.chin) {
-            (None, _) => "Click the top of the head (the crown, not the top of the hair).",
-            (Some(_), None) => "Now click the bottom of the chin.",
-            _ => "Drag the markers to adjust. Right-click to start again.",
+        match self.next_click {
+            Some(Grab::Crown) => {
+                "Click the top of the head (the crown, not the top of the hair), \
+                 or drag and zoom the preview on the right."
+            }
+            Some(Grab::Chin) => "Now click the bottom of the chin.",
+            None => "Drag the markers to adjust. Right-click to start again.",
+        }
+    }
+
+    /// Move the photo in the preview: `d` is in preview points.
+    fn pan(&mut self, d: Vec2, preview_h: f32) {
+        let (Some(a), Some(b)) = (self.crown, self.chin) else {
+            return;
+        };
+        let head_px = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let s = self.spec();
+        let k = head_px / (preview_h * self.head_mm / s.height_mm);
+        self.crown = Some((a.0 - d.x * k, a.1 - d.y * k));
+        self.chin = Some((b.0 - d.x * k, b.1 - d.y * k));
+        self.result_dirty = true;
+    }
+
+    /// Make the photo `z` times bigger in the result, keeping the face centred.
+    fn zoom(&mut self, z: f32) {
+        let (Some(a), Some(b)) = (self.crown, self.chin) else {
+            return;
+        };
+        let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        let half = ((b.0 - a.0) / 2.0 / z, (b.1 - a.1) / 2.0 / z);
+        let m = Marks {
+            crown: (mid.0 - half.0, mid.1 - half.1),
+            chin: (mid.0 + half.0, mid.1 + half.1),
+        };
+        if m.valid() {
+            self.crown = Some(m.crown);
+            self.chin = Some(m.chin);
+            self.result_dirty = true;
         }
     }
 
@@ -286,9 +335,9 @@ impl PassportDialog {
         };
 
         if response.secondary_clicked() {
-            self.crown = None;
-            self.chin = None;
-            self.result_dirty = true;
+            let full = (src.full.width() as f32, src.full.height() as f32);
+            self.guess_marks(full.0, full.1);
+            return;
         }
         if response.drag_started() {
             if let Some(pos) = response.interact_pointer_pos() {
@@ -321,10 +370,20 @@ impl PassportDialog {
         if response.clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let p = to_image(pos);
-                if self.crown.is_none() {
-                    self.crown = Some(p);
-                } else if self.chin.is_none() {
-                    self.chin = Some(p);
+                match self.next_click {
+                    Some(Grab::Crown) => {
+                        // Keep the guessed head height until the chin is clicked.
+                        if let (Some(a), Some(b)) = (self.crown, self.chin) {
+                            self.chin = Some((p.0 + b.0 - a.0, p.1 + b.1 - a.1));
+                        }
+                        self.crown = Some(p);
+                        self.next_click = Some(Grab::Chin);
+                    }
+                    Some(Grab::Chin) => {
+                        self.chin = Some(p);
+                        self.next_click = None;
+                    }
+                    None => {}
                 }
                 self.result_dirty = true;
             }
@@ -449,6 +508,25 @@ impl PassportDialog {
 
         ui.add_space(6.0);
         self.result_preview(ui);
+        ui.horizontal(|ui| {
+            ui.label("Zoom");
+            if ui.button("−").on_hover_text("Zoom out").clicked() {
+                self.zoom(1.0 / 1.05);
+            }
+            if ui.button("+").on_hover_text("Zoom in").clicked() {
+                self.zoom(1.05);
+            }
+            if ui
+                .button("Reset")
+                .on_hover_text("Back to the starting guess")
+                .clicked()
+            {
+                if let Some(src) = &self.source {
+                    let (w, h) = (src.full.width() as f32, src.full.height() as f32);
+                    self.guess_marks(w, h);
+                }
+            }
+        });
         ui.add_space(6.0);
 
         ui.horizontal(|ui| {
@@ -533,7 +611,21 @@ impl PassportDialog {
                 _ => None,
             };
         }
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(size, Sense::drag());
+        if response.dragged() {
+            self.pan(response.drag_delta(), rect.height());
+        }
+        if response.hovered() {
+            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let z = pinch * (scroll / 200.0).exp();
+            if (z - 1.0).abs() > 1e-4 {
+                self.zoom(z);
+            }
+        }
+        let response = response.on_hover_text("Drag to move the photo, scroll to zoom");
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
         let painter = ui.painter_at(rect);
         match &self.result {
             Some(t) => {
