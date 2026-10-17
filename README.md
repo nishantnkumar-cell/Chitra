@@ -87,11 +87,11 @@ Chitra lists the rest of the folder and you move through it with the keyboard.
 | 0 / 1 | Fit to window / actual pixels |
 | Drag | Pan when zoomed in |
 | R / Shift+R | Rotate view right / left |
-| F, F11, double-click | Full screen |
+| F, F11, Ctrl+Cmd+F (Mac), double-click | Full screen |
 | I | Info panel with EXIF (camera, lens, exposure, GPS) |
 | S | Slideshow (3 s per photo by default) |
 | [ and ] | Fewer or more seconds per photo (1 to 60), also in Settings |
-| Delete | Move to Recycle Bin (asks first) |
+| Delete, Cmd+Backspace (Mac) | Move to Recycle Bin (asks first) |
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy file path |
 | Ctrl+O / Ctrl+Shift+O | Open file / open folder |
 | Ctrl+S | Convert dialog |

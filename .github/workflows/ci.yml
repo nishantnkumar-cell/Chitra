@@ -58,10 +58,9 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      # jxl-encoder's SIMD crate does not build on Apple Silicon yet, so macOS
-      # tests the lossless-only build.
-      - if: runner.os != 'macOS'
-        run: cargo test
+      # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
+      # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
+      - run: cargo test
       - run: cargo test --no-default-features
 
   windows-release:

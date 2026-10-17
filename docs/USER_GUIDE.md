@@ -91,7 +91,7 @@ and the wheel changes photo again. You can change this in
 | Drag | Move around a zoomed photo |
 | Right-click | Back to fit-to-window |
 | `R` / `Shift+R` | Rotate right / left (view only; the file is not changed) |
-| `F`, `F11` or double-click | Full screen on / off |
+| `F`, `F11`, `Ctrl+Cmd+F` (Mac) or double-click | Full screen on / off |
 | `Esc` | Leave full screen |
 
 Photos taken sideways are turned upright automatically from their EXIF data.
@@ -131,7 +131,7 @@ dimensions, format, file size and zoom.
 |---|---|
 | `Ctrl+C` | Copy the image to the clipboard |
 | `Ctrl+Shift+C` | Copy the file's path |
-| `Delete` or **Delete** | Move the photo to the Recycle Bin / Trash (asks first) |
+| `Delete`, `Cmd+Backspace` (Mac) or **Delete** | Move the photo to the Recycle Bin / Trash (asks first) |
 | `F5` | Re-read the folder |
 
 ## Converting photos

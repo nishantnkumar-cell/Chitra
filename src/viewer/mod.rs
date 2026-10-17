@@ -692,7 +692,11 @@ impl App {
         if key(none, Key::R) {
             self.rotation = (self.rotation + 1) % 4;
         }
-        if key(none, Key::F11) || key(none, Key::F) {
+        // Ctrl+Cmd+F is the macOS full-screen shortcut; F11 shows the desktop there.
+        if key(none, Key::F11)
+            || key(none, Key::F)
+            || key(Modifiers::MAC_CMD | Modifiers::CTRL, Key::F)
+        {
             self.toggle_fullscreen(ctx);
         }
         if key(none, Key::F1) || key(shift, Key::Questionmark) || key(none, Key::Questionmark) {
@@ -719,7 +723,8 @@ impl App {
         if key(none, Key::F5) {
             self.rescan();
         }
-        if key(none, Key::Delete) {
+        // Cmd+Backspace, since Mac laptops have no forward-Delete key.
+        if key(none, Key::Delete) || key(cmd, Key::Backspace) {
             self.confirm_delete = self.current_path();
         }
         let (back, forward) = ctx.input(|i| {
@@ -1925,7 +1930,7 @@ const HELP: &[(&str, &str)] = &[
     ("I", "Info panel with EXIF"),
     ("S", "Slideshow"),
     ("[ / ]", "Slideshow: fewer / more seconds per photo"),
-    ("Delete", "Move to Recycle Bin"),
+    ("Delete, Cmd+Backspace", "Move to Recycle Bin"),
     ("Ctrl+C / Ctrl+Shift+C", "Copy image / copy path"),
     ("Ctrl+O / Ctrl+Shift+O", "Open file / folder"),
     ("Ctrl+S", "Convert (batch)"),
