@@ -163,6 +163,68 @@ fn metadata_is_kept_upright_or_stripped() {
     assert!(stripped.exif.is_none());
 }
 
+#[cfg(feature = "lossy-encoders")]
+#[test]
+fn jpeg_to_jpeg_xl_is_repacked() {
+    let dir = tempfile::tempdir().unwrap();
+    let photo = dir.path().join("photo.jpg");
+    let rotated = dir.path().join("rotated.jpg");
+    write_image(&photo, Format::Jpeg, 320, 240);
+    let mut enc = EncodeOptions::new(Format::Jpeg);
+    enc.exif = Some(exif_with_orientation(6));
+    encode(
+        &pattern_rgb(320, 240),
+        &[],
+        &enc,
+        fs::File::create(&rotated).unwrap(),
+    )
+    .unwrap();
+    let jpeg_size = fs::metadata(&photo).unwrap().len();
+    let jpeg = decode_file(&photo, DecodeOptions::default()).unwrap();
+
+    let convert = |opts: &mut ConvertOptions, out: &str, input: &Path| {
+        opts.out_dir = Some(dir.path().join(out));
+        let report = run(plan(&[input.to_path_buf()], opts), opts, |_| {});
+        assert_eq!(report.converted(), 1, "{:?}", report.results);
+        let output = &report.results[0].job.output;
+        (
+            fs::metadata(output).unwrap().len(),
+            decode_file(output, DecodeOptions::default()).unwrap(),
+        )
+    };
+
+    // Repacked: smaller than the JPEG, same pixels whatever the quality setting.
+    let mut opts = ConvertOptions::new(Format::JpegXl);
+    opts.quality = 10;
+    let (size, out) = convert(&mut opts, "repack", &photo);
+    assert!(size < jpeg_size, "{size} >= {jpeg_size}");
+    assert_eq!(out.format, Format::JpegXl);
+    assert!(mean_abs_diff(&jpeg.image, &out.image) < 1.0);
+
+    // Without metadata it is a bare codestream, still the same pixels.
+    opts.keep_metadata = false;
+    let (bare, out) = convert(&mut opts, "bare", &photo);
+    assert!(bare <= size);
+    assert!(mean_abs_diff(&jpeg.image, &out.image) < 1.0);
+
+    // Re-encoding when asked, when resizing, or when EXIF rotates the photo.
+    let mut opts = ConvertOptions::new(Format::JpegXl);
+    opts.quality = 10;
+    opts.jpeg_repack = false;
+    let (_, out) = convert(&mut opts, "reencode", &photo);
+    assert!(mean_abs_diff(&jpeg.image, &out.image) > 1.0);
+    let mut opts = ConvertOptions::new(Format::JpegXl);
+    opts.resize = Some(ResizeSpec::LongestSide(100));
+    let (_, out) = convert(&mut opts, "resized", &photo);
+    assert_eq!((out.image.width(), out.image.height()), (100, 75));
+    let (_, out) = convert(
+        &mut ConvertOptions::new(Format::JpegXl),
+        "rotated",
+        &rotated,
+    );
+    assert_eq!((out.image.width(), out.image.height()), (240, 320));
+}
+
 #[test]
 fn overwriting_the_input_in_place_is_safe() {
     let dir = tempfile::tempdir().unwrap();

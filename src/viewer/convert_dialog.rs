@@ -32,6 +32,7 @@ pub struct ConvertDialog {
     format: Format,
     quality: u8,
     lossless: bool,
+    jpeg_repack: bool,
     resize_on: bool,
     resize_px: u32,
     out_dir: Option<PathBuf>,
@@ -52,6 +53,7 @@ impl Default for ConvertDialog {
             format: Format::WebP,
             quality: 90,
             lossless: false,
+            jpeg_repack: true,
             resize_on: false,
             resize_px: 2048,
             out_dir: None,
@@ -143,6 +145,17 @@ impl ConvertDialog {
                         }
                     });
                     ui.end_row();
+
+                    if encode::JPEG_REPACK && self.format == Format::JpegXl {
+                        ui.label("JPEG files");
+                        ui.checkbox(&mut self.jpeg_repack, "Repack losslessly")
+                            .on_hover_text(
+                                "Keeps the JPEG's own data: about 20% smaller than the JPEG \
+                                 with no quality loss. Quality settings don't apply. \
+                                 Resized or rotated photos are re-encoded instead.",
+                            );
+                        ui.end_row();
+                    }
 
                     ui.label("Resize");
                     ui.horizontal(|ui| {
@@ -262,6 +275,7 @@ impl ConvertDialog {
         let mut opts = ConvertOptions::new(self.format);
         opts.quality = self.quality;
         opts.lossless = self.lossless;
+        opts.jpeg_repack = self.jpeg_repack;
         opts.resize = self
             .resize_on
             .then_some(ResizeSpec::LongestSide(self.resize_px));
