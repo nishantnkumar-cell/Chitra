@@ -30,6 +30,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Video playback links against GStreamer on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
@@ -58,10 +60,24 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # GStreamer with H.264 and AAC decoders, as desktops ship it.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
       # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
       # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
       - run: cargo test
       - run: cargo test --no-default-features
+      # Plays phone clips through the system player (Media Foundation,
+      # AVFoundation or GStreamer) on the main thread, as the viewer does.
+      - name: Play phone videos
+        shell: bash
+        run: |
+          cargo run --quiet --bin chitra -- --play-test tests/data/h264-aac.mp4
+          cargo run --quiet --bin chitra -- --play-test tests/data/portrait.mov
+      # Windows needs the HEVC Video Extensions from the Store for HEVC.
+      - name: Play an HEVC video
+        if: runner.os != 'Windows'
+        run: cargo run --quiet --bin chitra -- --play-test tests/data/hevc.mov
 
   windows-release:
     runs-on: windows-latest
@@ -141,6 +157,8 @@ jobs:
           if ($null -eq $openWith.'Chitra.Image') { throw "Open with entry for .jxl missing" }
           $openWith = Get-ItemProperty 'HKCU:\Software\Classes\.heic\OpenWithProgids'
           if ($null -eq $openWith.'Chitra.Image') { throw "Open with entry for .heic missing" }
+          $openWith = Get-ItemProperty 'HKCU:\Software\Classes\.mov\OpenWithProgids'
+          if ($null -eq $openWith.'Chitra.Video') { throw "Open with entry for .mov missing" }
           if (-not (Test-Path 'HKCU:\Software\Classes\Directory\shell\Chitra\command')) { throw "folder menu entry missing" }
           $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Chitra.lnk"
           if (-not (Test-Path $menu)) { throw "Start menu shortcut missing" }
@@ -149,6 +167,7 @@ jobs:
           for ($i = 0; $i -lt 60 -and (Test-Path "$app\chitra.exe"); $i++) { Start-Sleep 1 }
           if (Test-Path "$app\chitra.exe") { throw "uninstall left chitra.exe behind" }
           if (Test-Path 'HKCU:\Software\Classes\Chitra.Image') { throw "uninstall left the ProgId behind" }
+          if (Test-Path 'HKCU:\Software\Classes\Chitra.Video') { throw "uninstall left the video ProgId behind" }
           Write-Host "Installer installs, registers and uninstalls cleanly"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -171,7 +190,7 @@ jobs:
       - name: Install packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream flatpak flatpak-builder dbus-user-session
+          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream flatpak flatpak-builder dbus-user-session libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
       - name: Check the menu entry and software-centre metadata
         run: |
           desktop-file-validate packaging/linux/*.desktop
@@ -187,6 +206,7 @@ jobs:
           tar -C t -xzf dist/chitra-*-linux-x86_64.tar.gz
           PREFIX="$PWD/t/prefix" t/chitra-*/install.sh
           t/prefix/bin/chitra-cli --version
+          t/prefix/bin/chitra --play-test "$PWD/tests/data/h264-aac.mp4"
           t/prefix/bin/chitra-cli convert tests/data/pattern.heic --to avif --out t/out
           test -s t/out/pattern.avif
           PREFIX="$PWD/t/prefix" t/chitra-*/install.sh --uninstall
@@ -207,6 +227,8 @@ jobs:
           dbus-run-session -- flatpak run --command=chitra-cli io.github.nishantnkumar_cell.Chitra \
             convert "$PWD/tests/data/pattern.heic" --to png --out "$PWD/t/flatpak"
           test -s t/flatpak/pattern.png
+          dbus-run-session -- flatpak run --command=chitra io.github.nishantnkumar_cell.Chitra \
+            --play-test "$PWD/tests/data/h264-aac.mp4"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: chitra-linux-x86_64

@@ -16,6 +16,8 @@
     </p>
     <ul>
       <li>Zoom, pan, rotate, slideshow and a thumbnail browser</li>
+      <li>Plays videos from Android phones and iPhones (MP4 and MOV) with the
+        system's GStreamer decoders</li>
       <li>Batch conversion to JPEG, JPEG XL, PNG, GIF, BMP, WebP and AVIF</li>
       <li>Keeps EXIF data and colour profiles</li>
       <li>Follows the light or dark style of your desktop</li>

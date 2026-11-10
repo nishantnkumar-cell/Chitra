@@ -13,6 +13,8 @@ finish-args:
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
+  # Sound for videos.
+  - --socket=pulseaudio
   # Browse and convert photos anywhere in your home folder and on external
   # drives. There is no network access.
   - --filesystem=home

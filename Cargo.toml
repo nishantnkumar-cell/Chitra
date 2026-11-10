@@ -48,6 +48,33 @@ windows-sys = { version = "0.61", features = [
 ] }
 # The main window's handle, so the Print dialog opens over it.
 raw-window-handle = "0.6"
+# Video playback through Media Foundation, part of Windows.
+windows = { version = "0.62", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Imaging",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+] }
+# Needed by the windows crate's #[implement] macro.
+windows-core = { version = "0.62", optional = true }
+
+# Video playback through AVFoundation, part of macOS.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "NSArray", "NSError", "NSString", "NSURL", "NSDictionary", "NSValue", "NSObject"] }
+objc2-av-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "AVAsset", "AVAssetReader", "AVAssetReaderOutput", "AVAssetTrack", "AVMediaFormat", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "objc2-core-media", "objc2-core-video"] }
+objc2-core-media = { version = "0.3", optional = true, default-features = false, features = ["std", "CMBase", "CMTime", "CMSampleBuffer", "objc2-core-video"] }
+objc2-core-video = { version = "0.3", optional = true, default-features = false, features = ["std", "CVBase", "CVPixelBuffer", "CVImageBuffer", "CVBuffer", "CVReturn"] }
+objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "CFString", "CFRunLoop"] }
+
+# Video playback through GStreamer, which Linux desktops ship.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+gstreamer = { version = "0.25", optional = true }
+gstreamer-app = { version = "0.25", optional = true }
+gstreamer-video = { version = "0.25", optional = true }
 
 [patch.crates-io]
 # Fixes decoding AVIF images with odd widths; see vendor/oxideav-avif/PATCHED.md.
@@ -56,7 +83,22 @@ oxideav-avif = { path = "vendor/oxideav-avif" }
 zenjpeg = { path = "vendor/zenjpeg" }
 
 [features]
-default = ["lossy-encoders"]
+default = ["lossy-encoders", "video"]
+# Playing phone videos (MP4/MOV with H.264 or HEVC and AAC) with the
+# operating system's own decoders: Media Foundation, AVFoundation or GStreamer.
+video = [
+    "dep:windows",
+    "dep:windows-core",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:objc2-av-foundation",
+    "dep:objc2-core-media",
+    "dep:objc2-core-video",
+    "dep:objc2-core-foundation",
+    "dep:gstreamer",
+    "dep:gstreamer-app",
+    "dep:gstreamer-video",
+]
 # Lossy WebP and JPEG XL output via zenwebp and jxl-encoder, and lossless
 # JPEG to JPEG XL repacking (pure Rust, but licensed AGPL-3.0 or commercial). Build with --no-default-features for a
 # binary without them that writes WebP and JPEG XL lossless only.
