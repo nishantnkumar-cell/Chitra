@@ -30,7 +30,7 @@ lexopt = "0.3.2"
 rayon = "1.12.0"
 natord = "1.0.9"
 arboard = "3.7.0"
-heifer = "0.2.0"
+heifer = "0.5.0"
 oxideav-avif = "0.0.15"
 
 [target.'cfg(target_os = "linux")'.dependencies]
