@@ -1,5 +1,9 @@
-//! The only platform-specific (and the only `unsafe`) code in Chitra: letting a
-//! Windows GUI-subsystem binary print to the console it was started from.
+//! The only platform-specific `unsafe` code in Chitra: letting a Windows
+//! GUI-subsystem binary print to the console it was started from, and
+//! printing photos through the Windows print dialog and GDI.
+
+#[cfg(windows)]
+pub mod print_windows;
 
 /// On Windows, attach to the parent console so `chitra convert` output is visible
 /// when run from cmd or PowerShell. No-op elsewhere.
