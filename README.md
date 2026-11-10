@@ -171,7 +171,7 @@ Chitra does not decode video itself. It hands the file to the player that
 comes with the operating system, which decodes with the graphics card where it
 can: **Media Foundation** on Windows, **AVFoundation** on macOS and
 **GStreamer** on Linux. So no video codec is added to Chitra (the Windows exe
-grows by about NN KB), and a video plays in Chitra exactly when it plays in
+grows by about 110 KB), and a video plays in Chitra exactly when it plays in
 the system's own video app:
 
 - **H.264 with AAC sound** (most Android phones, WhatsApp, older iPhones)
