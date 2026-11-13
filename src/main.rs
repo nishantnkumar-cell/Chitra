@@ -34,6 +34,24 @@ fn main() -> ExitCode {
             print!("{}", cli::USAGE);
             ExitCode::SUCCESS
         }
+        // Undocumented: plays a video silently to check the system player
+        // (used by CI).
+        Some("--play-test") => {
+            platform::attach_console();
+            let Some(path) = args.get(1) else {
+                return ExitCode::from(2);
+            };
+            match viewer::play_test(std::path::Path::new(path)) {
+                Ok(report) => {
+                    println!("{report}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Some("-V" | "--version") => {
             platform::attach_console();
             println!("{}", cli::version());

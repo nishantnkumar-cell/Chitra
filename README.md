@@ -10,6 +10,8 @@ Use the installer, or run the portable `.exe` without installing anything.
 Formats: **JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF**, including animated GIF,
 WebP, APNG and JPEG XL. **HEIC/HEIF** photos (as taken by iPhones) open too,
 and can be converted to any of the other formats; Chitra does not write HEIF.
+**Phone videos** (MP4 and MOV from Android phones and iPhones, H.264 or HEVC)
+play in the viewer with sound; see [Videos](#videos).
 
 ## Install
 
@@ -20,7 +22,8 @@ for your account without needing admin rights; the first page also offers an
 install for all users. You get:
 
 - Chitra in the Start menu, and a desktop icon if you tick it;
-- Chitra under **Open with** for JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF and HEIC, and
+- Chitra under **Open with** for JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF, HEIC
+  and phone videos (MP4, MOV, M4V, 3GP), and
   **Browse with Chitra** on folders (on Windows 11 it is under "Show more
   options"). Windows only lets you change your default photo app yourself:
   Open with, then Choose another app, then Always;
@@ -148,6 +151,43 @@ sideways), and transparent parts print white.
 - **macOS**: Chitra's own dialog (printer, paper, fit or fill, copies) that
   sends the job to the Mac's printers with CUPS (`lp`). It can also save the
   page as a PDF.
+
+## Videos
+
+Videos from Android phones and iPhones (`.mp4`, `.mov`, `.m4v`, `.3gp`) sit in
+the folder next to the photos, with a play mark on their thumbnails. Open one
+and it plays with sound; the bar at the bottom has play/pause, a position
+slider, the time, mute and volume, and hides while the video plays and the
+mouse is still. Moving to another file stops the video.
+
+| Key | Action |
+|---|---|
+| Space or K, or click the video | Play / pause |
+| Shift+Left / Shift+Right | Back / forward 5 seconds |
+| M | Mute |
+| Right / Left | Next / previous file, as for photos |
+
+Chitra does not decode video itself. It hands the file to the player that
+comes with the operating system, which decodes with the graphics card where it
+can: **Media Foundation** on Windows, **AVFoundation** on macOS and
+**GStreamer** on Linux. So no video codec is added to Chitra (the Windows exe
+grows by about 110 KB), and a video plays in Chitra exactly when it plays in
+the system's own video app:
+
+- **H.264 with AAC sound** (most Android phones, WhatsApp, older iPhones)
+  plays everywhere.
+- **HEVC (H.265)**, which iPhones record by default and many Android phones
+  use for 4K, plays on macOS and on Linux with the libav plugins. Windows
+  needs the **HEVC Video Extensions** from the Microsoft Store (many PCs come
+  with the free "from Device Manufacturer" version); without them Chitra
+  says so.
+- On Linux, H.264 and HEVC need `gstreamer1.0-libav` (Ubuntu, Debian) or
+  `gstreamer1-libav` (Fedora, from RPM Fusion); KDE Plasma and GNOME usually
+  have it. The Flatpak gets the codecs from the Freedesktop runtime's codec
+  extension.
+
+Phone videos recorded upright are shown upright. Converting is for photos;
+videos are left out of batch conversion.
 
 ## Batch converter
 

@@ -112,6 +112,26 @@ Photos taken sideways are turned upright automatically from their EXIF data.
   - **Folders** in the toolbar switches between the overview and the plain
     grid. You can turn the overview off in Settings.
 
+## Videos
+
+Phone videos (`.mp4`, `.mov`, `.m4v`, `.3gp` from Android phones and iPhones)
+are listed with the photos and have a play mark on their thumbnails. Open one
+and it starts playing with sound. Move the mouse to show the control bar:
+
+| Do this | To |
+|---|---|
+| `Space`, `K`, click the video, or the play button | Play / pause |
+| Drag or click the position slider | Jump to that point |
+| `Shift+Left` / `Shift+Right` | Back / forward 5 seconds |
+| `M` or the speaker button | Mute / unmute |
+| Drag the volume slider | Volume (remembered for next time) |
+| `Right` / `Left` | Next / previous file (the video stops) |
+
+During a slideshow, a video plays to its end before the next file. The info
+panel (`I`) shows the video's length, size and codecs. Videos are decoded by
+the system (Media Foundation on Windows, AVFoundation on macOS, GStreamer on
+Linux), so they play with the same codecs as the system's own video app.
+
 ## Slideshow
 
 Press `S` or click **Slideshow** to start; press `S` or `Esc` to stop.
@@ -262,6 +282,11 @@ code-signed. Click **More info**, then **Run anyway**.
 **A photo shows "cannot decode".** The file is damaged or not really in the
 format its extension says. Chitra skips it and carries on with the rest of the
 folder or batch.
+
+**A video says "Cannot play this video".** The system has no decoder for it.
+On Windows, iPhone videos (HEVC) need **HEVC Video Extensions** from the
+Microsoft Store. On Linux, install `gstreamer1.0-libav` (Ubuntu, Debian) or
+`gstreamer1-libav` (Fedora, from RPM Fusion).
 
 **Converting to AVIF is slow.** AVIF compresses very well but takes several
 seconds per large photo. Use WebP or JPEG XL when speed matters.

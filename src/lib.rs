@@ -14,6 +14,7 @@ pub mod metadata;
 pub mod passport;
 pub mod print;
 pub mod resize;
+pub mod video;
 
 pub use decode::{DecodeOptions, Decoded, decode_file};
 pub use format::Format;

@@ -12,6 +12,8 @@ mod passport_dialog;
 mod print;
 mod settings;
 mod util;
+mod video;
+mod video_view;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,6 +25,7 @@ use eframe::egui::{self, Color32, Key, Modifiers, PointerButton, Pos2, Rect, Sen
 
 use chitra::folder::{self, Entry, SortKey};
 use chitra::format::Format;
+use chitra::video::is_video_path;
 
 use convert_dialog::ConvertDialog;
 use desktop_theme::DesktopTheme;
@@ -31,6 +34,7 @@ use passport_dialog::PassportDialog;
 use print::Printing;
 use settings::{SLIDESHOW_SECS, Settings, THUMB_SIZES, Theme, WheelMode};
 use util::{format_time, human_bytes};
+use video_view::{SEEK_STEP, VideoView};
 
 const PREFETCH_AHEAD: usize = 2;
 const PREFETCH_BEHIND: usize = 1;
@@ -44,6 +48,8 @@ const OVERVIEW_MAX_DIRS: usize = 200;
 /// After the wheel moves to another photo, ignore it briefly so one flick of
 /// a free-spinning wheel doesn't skip a dozen photos.
 const WHEEL_PAUSE: Duration = Duration::from_millis(120);
+
+pub use video::play_test;
 
 pub fn run(path: Option<PathBuf>) -> Result<(), String> {
     let options = eframe::NativeOptions {
@@ -157,6 +163,8 @@ struct App {
     convert: ConvertDialog,
     passport: PassportDialog,
     printing: Printing,
+    /// The video being played, when the single view shows one.
+    video: Option<VideoView>,
 
     grid_offset: f32,
     grid_view_h: f32,
@@ -216,6 +224,7 @@ impl App {
             convert: ConvertDialog::default(),
             passport: PassportDialog::default(),
             printing: Printing::default(),
+            video: None,
             grid_offset: 0.0,
             grid_view_h: 0.0,
             grid_follow: false,
@@ -280,7 +289,7 @@ impl App {
         let (sort, desc) = (self.settings.sort, self.settings.sort_desc);
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
-            let mut entries = folder::list_images(&dir).unwrap_or_default();
+            let mut entries = folder::list_media(&dir).unwrap_or_default();
             folder::sort(&mut entries, sort, desc);
             let subdirs = folder::list_subfolders(&dir);
             let has_subfolders = !subdirs.is_empty();
@@ -296,14 +305,20 @@ impl App {
             }
             ctx.request_repaint();
             for sub in subdirs {
-                let mut photos = folder::list_images(&sub).unwrap_or_default();
+                let mut photos = folder::list_media(&sub).unwrap_or_default();
                 folder::sort(&mut photos, sort, desc);
                 let total = photos.len();
                 photos.truncate(OVERVIEW_PHOTOS);
                 let subfolders = folder::list_subfolders(&sub).len();
                 if total == 0 && subfolders > 0 {
-                    photos =
-                        folder::images_below(&sub, OVERVIEW_PHOTOS, OVERVIEW_MAX_DIRS, sort, desc);
+                    photos = folder::images_below(
+                        &sub,
+                        OVERVIEW_PHOTOS,
+                        OVERVIEW_MAX_DIRS,
+                        sort,
+                        desc,
+                        true,
+                    );
                 }
                 if photos.is_empty() {
                     continue;
@@ -491,6 +506,10 @@ impl App {
             want.len()
         };
         for (j, path) in want.into_iter().take(count).enumerate() {
+            // Videos are played, not decoded here; see sync_video.
+            if is_video_path(&path) {
+                continue;
+            }
             let entry = self.cache.entry(path.clone()).or_default();
             if matches!(entry.display, None | Some(Slot::Pending)) {
                 entry.display = Some(Slot::Pending);
@@ -518,6 +537,33 @@ impl App {
                 },
                 true,
             );
+        }
+    }
+
+    /// Play the current video in the single view; stop it when the user
+    /// moves to another file or to the grid.
+    fn sync_video(&mut self, ctx: &egui::Context) {
+        let want = self
+            .current_path()
+            .filter(|p| self.mode == Mode::Single && is_video_path(p));
+        let Some(path) = want else {
+            self.video = None;
+            return;
+        };
+        if self.video.as_ref().is_none_or(|v| v.path() != path) {
+            self.video = None;
+            self.video = Some(VideoView::open(
+                ctx,
+                &path,
+                self.display_max,
+                self.settings.video_volume,
+                self.settings.video_muted,
+            ));
+        }
+        if let Some(v) = &mut self.video {
+            v.update(ctx);
+            self.settings.video_volume = v.volume;
+            self.settings.video_muted = v.muted;
         }
     }
 
@@ -559,7 +605,12 @@ impl App {
             .iter()
             .flat_map(|f| f.extensions().iter().copied())
             .collect();
-        let mut dialog = rfd::FileDialog::new().add_filter("Images", &exts);
+        let videos = chitra::video::EXTENSIONS;
+        let all: Vec<&str> = exts.iter().copied().chain(videos).collect();
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Photos and videos", &all)
+            .add_filter("Photos", &exts)
+            .add_filter("Videos", &videos);
         if let Some(dir) = &self.dir {
             dialog = dialog.set_directory(dir);
         }
@@ -582,6 +633,10 @@ impl App {
         let Some(path) = self.confirm_delete.take() else {
             return;
         };
+        // Windows cannot move a file that is open for playing.
+        if self.video.as_ref().is_some_and(|v| v.path() == path) {
+            self.video = None;
+        }
         match trash::delete(&path) {
             Ok(()) => {
                 self.cache.remove(&path);
@@ -609,6 +664,10 @@ impl App {
         let Some(path) = self.current_path() else {
             return;
         };
+        if is_video_path(&path) {
+            self.toast("Copying works for photos, not videos");
+            return;
+        }
         let result = chitra::decode_file(&path, chitra::DecodeOptions::default())
             .map_err(|e| e.to_string())
             .and_then(|d| {
@@ -630,7 +689,7 @@ impl App {
 
     /// Print the photo being viewed, turned the way it is shown.
     fn print_current(&mut self) {
-        let Some(path) = self.current_path() else {
+        let Some(path) = self.current_path().filter(|p| !is_video_path(p)) else {
             return;
         };
         let turns = self.rotation;
@@ -711,7 +770,8 @@ impl App {
             self.convert.open = true;
         }
         if key(cmd_shift, Key::P) {
-            self.passport.open_on(self.current_path());
+            self.passport
+                .open_on(self.current_path().filter(|p| !is_video_path(p)));
         }
         if key(cmd, Key::P) {
             self.print_current();
@@ -796,6 +856,22 @@ impl App {
                 self.mode = Mode::Single;
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+
+        // Video keys come first: Space plays and pauses instead of moving on.
+        if let (Mode::Single, Some(v)) = (self.mode, self.video.as_mut()) {
+            if key(shift, Key::ArrowRight) {
+                v.seek_by(SEEK_STEP, true);
+            }
+            if key(shift, Key::ArrowLeft) {
+                v.seek_by(SEEK_STEP, false);
+            }
+            if key(none, Key::Space) || key(none, Key::K) {
+                v.toggle_play();
+            }
+            if key(none, Key::M) {
+                v.toggle_mute();
             }
         }
 
@@ -1067,15 +1143,17 @@ impl App {
             {
                 self.convert.open = true;
             }
+            let photo = has && self.video.is_none();
             if ui
-                .add_enabled(has, egui::Button::new("Passport"))
+                .add_enabled(photo, egui::Button::new("Passport"))
                 .on_hover_text("Passport or visa photo from this photo (Ctrl+Shift+P)")
                 .clicked()
             {
-                self.passport.open_on(self.current_path());
+                self.passport
+                    .open_on(self.current_path().filter(|p| !is_video_path(p)));
             }
             if ui
-                .add_enabled(has && !self.printing.busy(), egui::Button::new("Print"))
+                .add_enabled(photo && !self.printing.busy(), egui::Button::new("Print"))
                 .on_hover_text("Print this photo (Ctrl+P)")
                 .clicked()
             {
@@ -1134,20 +1212,37 @@ impl App {
             ui.label(format!("{} / {}", self.index + 1, self.entries.len()));
             ui.separator();
             ui.label(entry.file_name());
-            if let Some(Slot::Ready(img)) =
+            if let Some(v) = self.video.as_ref().filter(|v| v.path() == entry.path) {
+                if let Some([w, h]) = v.display_size() {
+                    ui.separator();
+                    ui.label(format!("{w} × {h}"));
+                }
+                ui.separator();
+                let s = v.status();
+                match s.duration {
+                    Some(d) => ui.label(format!(
+                        "Video {} / {}",
+                        video_view::clock(s.position),
+                        video_view::clock(d)
+                    )),
+                    None => ui.label("Video"),
+                };
+            } else if let Some(Slot::Ready(img)) =
                 self.cache.get(&entry.path).and_then(|c| c.display.as_ref())
             {
                 ui.separator();
                 ui.label(format!("{} × {}", img.full_size[0], img.full_size[1]));
                 ui.separator();
-                ui.label(img.format.name());
+                if let Some(format) = img.format {
+                    ui.label(format.name());
+                }
                 if img.frames.len() > 1 {
                     ui.label(format!("({} frames)", img.frames.len()));
                 }
             }
             ui.separator();
             ui.label(human_bytes(entry.size));
-            if self.mode == Mode::Single {
+            if self.mode == Mode::Single && self.video.is_none() {
                 ui.separator();
                 ui.label(format!("{:.0}%", self.last_scale * 100.0));
             }
@@ -1188,8 +1283,30 @@ impl App {
                     if let Some(m) = entry.modified {
                         row("Modified", format_time(m));
                     }
+                    if let Some(info) = self
+                        .video
+                        .as_ref()
+                        .filter(|v| v.path() == entry.path)
+                        .and_then(|v| v.info())
+                    {
+                        let [w, h] = info.display_size();
+                        if w > 0 {
+                            row("Dimensions", format!("{w} × {h} px"));
+                        }
+                        if let Some(d) = info.duration {
+                            row("Length", video_view::clock(d));
+                        }
+                        if let Some(c) = info.video_codec_name() {
+                            row("Video", c);
+                        }
+                        if let Some(c) = info.audio_codec_name() {
+                            row("Sound", c);
+                        }
+                    }
                     if let Some(img) = &img {
-                        row("Format", img.format.name().to_string());
+                        if let Some(format) = img.format {
+                            row("Format", format.name().to_string());
+                        }
                         row(
                             "Dimensions",
                             format!("{} × {} px", img.full_size[0], img.full_size[1]),
@@ -1241,6 +1358,20 @@ impl App {
             );
             return;
         };
+        if let Some(video) = self.video.as_mut().filter(|v| v.path() == path) {
+            video.ui(ui, rect, &response, self.rotation);
+            if response.hovered() {
+                let (vertical, tilt) = ui.input(wheel_notches);
+                let tilt = if self.settings.side_buttons {
+                    tilt
+                } else {
+                    0.0
+                };
+                self.wheel_step(vertical + tilt);
+            }
+            self.last_scale = 1.0;
+            return;
+        }
         let cached = self.cache.get(&path);
         let display = match cached.and_then(|c| c.display.as_ref()) {
             Some(Slot::Ready(img)) => img.clone(),
@@ -1468,7 +1599,13 @@ impl App {
                                 ui.visuals().widgets.hovered.weak_bg_fill,
                             );
                         }
-                        paint_thumb(&painter, rect, thumb_size, thumbs.get(&entries[i].path));
+                        paint_thumb(
+                            &painter,
+                            rect,
+                            thumb_size,
+                            &entries[i].path,
+                            thumbs.get(&entries[i].path),
+                        );
                         paint_caption(
                             &painter,
                             rect,
@@ -1608,7 +1745,7 @@ impl App {
                                     ui.visuals().widgets.hovered.weak_bg_fill,
                                 );
                             }
-                            paint_thumb(&painter, rect, thumb_size, thumbs.get(&e.path));
+                            paint_thumb(&painter, rect, thumb_size, &e.path, thumbs.get(&e.path));
                             paint_caption(&painter, rect, e.file_name(), ui.visuals().text_color());
                             if resp.on_hover_text(e.file_name()).clicked() {
                                 action = Some(OverviewAction::OpenPhoto(e.path.clone()));
@@ -1733,8 +1870,14 @@ impl App {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
-        let current = self.current_path();
-        let folder: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+        // Converting is for photos; videos in the folder are left out.
+        let current = self.current_path().filter(|p| !is_video_path(p));
+        let folder: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .map(|e| e.path.clone())
+            .filter(|p| !is_video_path(p))
+            .collect();
         self.convert.show(ctx, current.as_ref(), &folder);
         if self.convert.finished {
             self.convert.finished = false;
@@ -1930,6 +2073,14 @@ impl App {
             return;
         };
         let interval = Duration::from_secs(u64::from(self.settings.slideshow_secs));
+        // A video plays to its end before the slideshow moves on.
+        if let Some(v) = &self.video {
+            let s = v.status();
+            if s.error.is_none() && !s.ended {
+                self.slideshow = Some(Instant::now());
+                return;
+            }
+        }
         let elapsed = started.elapsed();
         if elapsed >= interval {
             self.step(1);
@@ -1982,6 +2133,9 @@ const HELP: &[(&str, &str)] = &[
     ("Ctrl+S", "Convert (batch)"),
     ("Ctrl+P", "Print"),
     ("Ctrl+Shift+P", "Passport / visa photo"),
+    ("Space or K (video)", "Play / pause"),
+    ("Shift+Left / Right (video)", "Back / forward 5 seconds"),
+    ("M (video)", "Mute"),
     ("Ctrl+,", "Settings (slideshow, mouse, sorting, theme)"),
     ("F5", "Refresh folder"),
     ("Esc", "Leave full screen, close, quit"),
@@ -2003,6 +2157,7 @@ impl eframe::App for App {
         self.poll_rows();
         self.poll_loader();
         self.handle_input(&ctx);
+        self.sync_video(&ctx);
         self.update_title(&ctx);
         self.tick_slideshow(&ctx);
 
@@ -2155,11 +2310,35 @@ fn paint_folder_tile(
 }
 
 /// Draw a thumbnail centred in the top square of a grid cell.
-fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, slot: Option<&Slot>) {
+fn paint_thumb(painter: &egui::Painter, cell: Rect, size: f32, path: &Path, slot: Option<&Slot>) {
     let box_rect = Rect::from_min_size(
         cell.min + Vec2::new((cell.width() - size) / 2.0, 4.0),
         Vec2::splat(size),
     );
+    paint_thumb_image(painter, box_rect, size, slot);
+    if is_video_path(path) {
+        paint_play_badge(painter, box_rect.center(), size);
+    }
+}
+
+/// A round "play" mark on a video's thumbnail.
+fn paint_play_badge(painter: &egui::Painter, c: Pos2, size: f32) {
+    let r = (size * 0.14).clamp(10.0, 22.0);
+    painter.circle_filled(c, r, Color32::from_black_alpha(150));
+    painter.circle_stroke(c, r, egui::Stroke::new(1.5, Color32::from_white_alpha(200)));
+    let t = r * 0.45;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            c + Vec2::new(-t * 0.7, -t),
+            c + Vec2::new(t, 0.0),
+            c + Vec2::new(-t * 0.7, t),
+        ],
+        Color32::WHITE,
+        egui::Stroke::NONE,
+    ));
+}
+
+fn paint_thumb_image(painter: &egui::Painter, box_rect: Rect, size: f32, slot: Option<&Slot>) {
     match slot {
         Some(Slot::Ready(img)) => {
             let [tw, th] = img.tex_size;
