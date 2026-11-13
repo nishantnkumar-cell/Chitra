@@ -134,6 +134,26 @@ dimensions, format, file size and zoom.
 | `Delete`, `Cmd+Backspace` (Mac) or **Delete** | Move the photo to the Recycle Bin / Trash (asks first) |
 | `F5` | Re-read the folder |
 
+## Printing
+
+Press `Ctrl+P` (`Cmd+P` on a Mac) or click **Print** in the toolbar to print
+the photo you are looking at. It prints the way it is shown on screen
+(including any rotation you applied with `R`), as large as fits on the paper
+with a small border, and turned to suit the paper.
+
+- On **Windows**, the usual Windows Print dialog opens: pick the printer,
+  paper size and number of copies there.
+- On **Linux** (KDE Plasma or GNOME), your desktop's print dialog opens.
+- On a **Mac**, and on Linux desktops without a print dialog service,
+  Chitra's own Print window opens: pick the printer, paper, **Fit to page**
+  (the whole photo) or **Fill page** (edge to edge, trimming the sides) and
+  copies. **Save as PDF…** saves the page instead of printing it.
+
+In the **Passport photo** window, **Print…** prints the print sheet or the
+single photo at its exact size, with no scaling, so each photo comes out at
+the official size. Put paper of the sheet's size (for example 6 x 4 in) in
+the printer, or a larger sheet and cut along the guides.
+
 ## Converting photos
 
 ### In the app
@@ -227,6 +247,8 @@ Press `F1` or **?** in the app for this list.
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy path |
 | Ctrl+O / Ctrl+Shift+O | Open file / folder |
 | Ctrl+S | Convert |
+| Ctrl+P (Cmd+P on Mac) | Print |
+| Ctrl+Shift+P | Passport photo |
 | Ctrl+, | Settings |
 | F5 | Refresh folder |
 | F1 | Shortcut list |

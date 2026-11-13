@@ -101,7 +101,8 @@ Chitra lists the rest of the folder and you move through it with the keyboard.
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy file path |
 | Ctrl+O / Ctrl+Shift+O | Open file / open folder |
 | Ctrl+S | Convert dialog |
-| Ctrl+P | Passport photo |
+| Ctrl+P (Cmd+P on Mac) | Print |
+| Ctrl+Shift+P | Passport photo |
 | Ctrl+, | Settings |
 | F5 | Refresh folder |
 | F1 | Shortcut list |
@@ -131,6 +132,22 @@ current photo is decoded first, then the next two and the previous one in the
 background, so arrow keys usually show an image that is already on the GPU.
 Photos are decoded at screen size and only reloaded at full resolution when
 you zoom in. Holding an arrow key cancels decodes you have already skipped.
+
+## Printing
+
+**Print** in the toolbar (or `Ctrl+P`, `Cmd+P` on a Mac) prints the photo
+being viewed, turned the way it is shown, as large as fits on the paper. It
+is turned to match the paper (landscape photos on portrait paper go
+sideways), and transparent parts print white.
+
+- **Windows**: the standard Windows Print dialog (printer, paper, copies),
+  printed through GDI, so every printer driver works.
+- **Linux**: the desktop's own print dialog on KDE Plasma and GNOME, through
+  the print portal, so it works in the Flatpak without extra permissions.
+  Desktops without a print portal get Chitra's dialog below.
+- **macOS**: Chitra's own dialog (printer, paper, fit or fill, copies) that
+  sends the job to the Mac's printers with CUPS (`lp`). It can also save the
+  page as a PDF.
 
 ## Batch converter
 
@@ -176,7 +193,7 @@ pixels and reset in the copied EXIF, so outputs always display upright.
 
 ## Passport photos
 
-**Passport** in the toolbar (or `Ctrl+P`) turns the current photo into a
+**Passport** in the toolbar (or `Ctrl+Shift+P`) turns the current photo into a
 passport or visa photo. Click the top of the head (the crown, not the top of
 the hair), then the bottom of the chin; drag either marker to adjust, or
 right-click to start again. Chitra scales the head to the middle of the
@@ -189,7 +206,9 @@ with the head guides drawn on it. Then save either:
 - **one photo** as a JPEG for online applications, at the official pixel size
   where there is one (India 630 x 810, US 1200 x 1200) and 600 dpi otherwise.
 
-Files are JPEGs tagged with their print resolution, so printing at actual
+**Print…** sends the sheet or photo straight to a printer at its exact
+physical size, never scaled to the paper, so the photos come out at the
+official size. Files are JPEGs tagged with their print resolution, so printing at actual
 size gives the right physical size, and carry no EXIF (no location or camera
 data). A slider moves the head size within the allowed range, and any area
 the photo does not cover is filled with a colour you pick. For upload forms

@@ -12,6 +12,10 @@ use chitra::decode::{self, DecodeOptions};
 use chitra::passport::{self, Layout, Marks, Paper, PhotoSpec, SPECS, SheetOptions};
 use chitra::resize;
 
+use chitra::print::Size;
+
+use super::print::Job;
+
 /// Longest side of the copy used for the on-screen photo and live preview.
 const PREVIEW_SRC_PX: u32 = 1600;
 /// Height of the live preview of the result, in points.
@@ -68,7 +72,13 @@ pub struct PassportDialog {
     message: Option<String>,
     /// Set after a save, so the viewer can rescan its folder.
     pub saved: bool,
+    /// Set by Print; the viewer takes it and prints the result.
+    pub print_request: Option<PrintBuild>,
+    /// The viewer is printing, so Print waits.
+    pub printing: bool,
 }
+
+pub type PrintBuild = Box<dyn FnOnce() -> Result<Job, String> + Send>;
 
 impl Default for PassportDialog {
     fn default() -> Self {
@@ -95,6 +105,8 @@ impl Default for PassportDialog {
             saving: None,
             message: None,
             saved: false,
+            print_request: None,
+            printing: false,
         }
     }
 }
@@ -578,6 +590,14 @@ impl PassportDialog {
             if ui.add_enabled(ready, egui::Button::new("Save…")).clicked() {
                 self.save();
             }
+            let print = egui::Button::new("Print…");
+            if ui
+                .add_enabled(ready && !self.printing, print)
+                .on_hover_text("Print at the exact size, with no scaling")
+                .clicked()
+            {
+                self.print();
+            }
             if self.saving.is_some() {
                 ui.spinner();
             }
@@ -673,6 +693,38 @@ impl PassportDialog {
         );
     }
 
+    /// Hand the viewer a job that renders the photo or sheet for printing at
+    /// its exact physical size.
+    fn print(&mut self) {
+        let (Some(marks), Some(src)) = (self.marks(), &self.source) else {
+            return;
+        };
+        let spec = self.spec();
+        let full = Arc::clone(&src.full);
+        let layout = self.layout(marks);
+        let sheet = (self.output == Output::Sheet).then_some(self.paper);
+        let title = match sheet {
+            Some(p) => format!("{} photos, {}", spec.id, p.name()),
+            None => format!("{} photo", spec.id),
+        };
+        self.message = None;
+        self.print_request = Some(Box::new(move || {
+            let (image, dpi) = render_output(&full, &spec, &layout, sheet)?;
+            let size = match sheet {
+                // The sheet is the paper size; measure it from its pixels.
+                Some(_) => Size::Exact {
+                    width_mm: image.width() as f32 * 25.4 / dpi,
+                    height_mm: image.height() as f32 * 25.4 / dpi,
+                },
+                None => Size::Exact {
+                    width_mm: spec.width_mm,
+                    height_mm: spec.height_mm,
+                },
+            };
+            Ok(Job { title, image, size })
+        }));
+    }
+
     fn save(&mut self) {
         let (Some(marks), Some(src)) = (self.marks(), &self.source) else {
             return;
@@ -716,7 +768,19 @@ fn write(
     max_kb: Option<u32>,
     out: &Path,
 ) -> Result<(), String> {
-    let (image, dpi): (RgbImage, f32) = match sheet {
+    let (image, dpi) = render_output(full, spec, layout, sheet)?;
+    let buf = passport::encode_jpeg(&image, dpi, max_kb).map_err(|e| e.to_string())?;
+    std::fs::write(out, buf).map_err(|e| e.to_string())
+}
+
+/// The finished photo or sheet and its resolution in dpi.
+fn render_output(
+    full: &DynamicImage,
+    spec: &PhotoSpec,
+    layout: &Layout,
+    sheet: Option<Paper>,
+) -> Result<(RgbImage, f32), String> {
+    Ok(match sheet {
         Some(paper) => {
             let opts = SheetOptions::new(paper);
             let (w, h) = spec.pixels_at(opts.dpi);
@@ -732,9 +796,7 @@ fn write(
             let photo = passport::render(full, spec, layout, w, h);
             (photo, passport::dpi_of(h, spec.height_mm))
         }
-    };
-    let buf = passport::encode_jpeg(&image, dpi, max_kb).map_err(|e| e.to_string())?;
-    std::fs::write(out, buf).map_err(|e| e.to_string())
+    })
 }
 
 fn to_color_image(rgba: &[u8], w: u32, h: u32) -> ColorImage {

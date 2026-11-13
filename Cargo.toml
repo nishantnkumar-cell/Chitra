@@ -30,11 +30,24 @@ lexopt = "0.3.2"
 rayon = "1.12.0"
 natord = "1.0.9"
 arboard = "3.7.0"
-heifer = "0.2.0"
+heifer = "0.5.0"
 oxideav-avif = "0.0.15"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Safe sendmsg, to hand the print portal the PDF as an open file.
+rustix = { version = "1.1.5", default-features = false, features = ["std", "net"] }
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_System_Console",
+    # Printing: the Print dialog and GDI.
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_UI_Controls_Dialogs",
+] }
+# The main window's handle, so the Print dialog opens over it.
+raw-window-handle = "0.6"
 
 [patch.crates-io]
 # Fixes decoding AVIF images with odd widths; see vendor/oxideav-avif/PATCHED.md.

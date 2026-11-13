@@ -459,8 +459,10 @@ dependencies = [
  "lexopt",
  "natord",
  "oxideav-avif",
+ "raw-window-handle",
  "rayon",
  "rfd",
+ "rustix 1.1.5",
  "tempfile",
  "trash",
  "windows-sys 0.61.2",
@@ -483,9 +485,9 @@ dependencies = [
 
 [[package]]
 name = "clipboard-win"
-version = "5.4.1"
+version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+checksum = "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a"
 dependencies = [
  "error-code",
 ]
@@ -1267,9 +1269,9 @@ dependencies = [
 
 [[package]]
 name = "heifer"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "397b5f8e1b211f3f5af885e744b3c9646f1dae6ba22815854f6e28d1cdb43167"
+checksum = "7b4095598410dc9dbc261344a9608eb20f3e7351de4ea4bf4828d49db8c5e07c"
 dependencies = [
  "heifer-hevc-dec",
  "heifer-hevc-enc",
@@ -1279,18 +1281,18 @@ dependencies = [
 
 [[package]]
 name = "heifer-hevc-dec"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f90b761515402a361a4fd65c786b33986c9f41ef9dfdb65f12ce878d8ad506dd"
+checksum = "7356cb9a058f1a7af369b03a31a97ea84d2a4945432202935e2e225f72e0006e"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "heifer-hevc-enc"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c70a53ac73f467a1246dc17c4c143f5ea5b51099381a3b383a5fd3477a120fed"
+checksum = "23aabce495bfe81bb6b27e494c7b5d621d7601b3f3b6b8873ae180544344262f"
 dependencies = [
  "heifer-hevc-dec",
  "thiserror 2.0.21",
@@ -1298,9 +1300,9 @@ dependencies = [
 
 [[package]]
 name = "heifer-isobmff"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0857d42d85122f8f442c1120bb5d208e2bd4c3a46d3df48c738b12b4b8e63504"
+checksum = "d177fefdeb15025c42342f0212acd4fa769323cef852d269ce4269b10ce8eb15"
 dependencies = [
  "thiserror 2.0.21",
 ]

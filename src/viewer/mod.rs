@@ -3,10 +3,13 @@
 //! egui/eframe (OpenGL).
 
 mod convert_dialog;
+#[cfg(target_os = "linux")]
+mod dbus;
 mod desktop_theme;
 mod headerbar;
 mod loader;
 mod passport_dialog;
+mod print;
 mod settings;
 mod util;
 
@@ -25,6 +28,7 @@ use convert_dialog::ConvertDialog;
 use desktop_theme::DesktopTheme;
 use loader::{Kind, LoadedImage, Loader, Request};
 use passport_dialog::PassportDialog;
+use print::Printing;
 use settings::{SLIDESHOW_SECS, Settings, THUMB_SIZES, Theme, WheelMode};
 use util::{format_time, human_bytes};
 
@@ -152,6 +156,7 @@ struct App {
     toast: Option<(String, Instant)>,
     convert: ConvertDialog,
     passport: PassportDialog,
+    printing: Printing,
 
     grid_offset: f32,
     grid_view_h: f32,
@@ -210,6 +215,7 @@ impl App {
             toast: None,
             convert: ConvertDialog::default(),
             passport: PassportDialog::default(),
+            printing: Printing::default(),
             grid_offset: 0.0,
             grid_view_h: 0.0,
             grid_follow: false,
@@ -622,6 +628,27 @@ impl App {
         }
     }
 
+    /// Print the photo being viewed, turned the way it is shown.
+    fn print_current(&mut self) {
+        let Some(path) = self.current_path() else {
+            return;
+        };
+        let turns = self.rotation;
+        self.printing.start(&self.ctx, move || {
+            let d = chitra::decode_file(&path, chitra::DecodeOptions::default())
+                .map_err(|e| e.to_string())?;
+            Ok(print::Job {
+                title: path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                image: chitra::print::prepare(&d.image, turns),
+                size: chitra::print::Size::Fit,
+            })
+        });
+    }
+
     fn toggle_fullscreen(&self, ctx: &egui::Context) {
         let fs = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fs));
@@ -648,7 +675,10 @@ impl App {
         }) {
             self.open(path);
         }
-        if self.confirm_delete.is_some() || ctx.egui_wants_keyboard_input() {
+        if self.confirm_delete.is_some()
+            || self.printing.dialog_open()
+            || ctx.egui_wants_keyboard_input()
+        {
             return;
         }
         let key = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_key(m, k));
@@ -680,8 +710,11 @@ impl App {
         if key(cmd, Key::S) {
             self.convert.open = true;
         }
-        if key(cmd, Key::P) {
+        if key(cmd_shift, Key::P) {
             self.passport.open_on(self.current_path());
+        }
+        if key(cmd, Key::P) {
+            self.print_current();
         }
         if key(cmd, Key::Q) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1036,10 +1069,17 @@ impl App {
             }
             if ui
                 .add_enabled(has, egui::Button::new("Passport"))
-                .on_hover_text("Passport or visa photo from this photo (Ctrl+P)")
+                .on_hover_text("Passport or visa photo from this photo (Ctrl+Shift+P)")
                 .clicked()
             {
                 self.passport.open_on(self.current_path());
+            }
+            if ui
+                .add_enabled(has && !self.printing.busy(), egui::Button::new("Print"))
+                .on_hover_text("Print this photo (Ctrl+P)")
+                .clicked()
+            {
+                self.print_current();
             }
             if ui
                 .add_enabled(has, egui::Button::new("Delete"))
@@ -1705,6 +1745,13 @@ impl App {
             self.passport.saved = false;
             self.rescan();
         }
+        if let Some(build) = self.passport.print_request.take() {
+            self.printing.start(ctx, build);
+        }
+        self.passport.printing = self.printing.busy();
+        if let Some(msg) = self.printing.show(ctx) {
+            self.toast(msg);
+        }
 
         if let Some(path) = self.confirm_delete.clone() {
             let mut confirm = false;
@@ -1933,7 +1980,8 @@ const HELP: &[(&str, &str)] = &[
     ("Ctrl+C / Ctrl+Shift+C", "Copy image / copy path"),
     ("Ctrl+O / Ctrl+Shift+O", "Open file / folder"),
     ("Ctrl+S", "Convert (batch)"),
-    ("Ctrl+P", "Passport / visa photo"),
+    ("Ctrl+P", "Print"),
+    ("Ctrl+Shift+P", "Passport / visa photo"),
     ("Ctrl+,", "Settings (slideshow, mouse, sorting, theme)"),
     ("F5", "Refresh folder"),
     ("Esc", "Leave full screen, close, quit"),
@@ -1942,6 +1990,15 @@ const HELP: &[(&str, &str)] = &[
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        #[cfg(windows)]
+        if self.printing.owner == 0 {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(h) = _frame.window_handle() {
+                if let RawWindowHandle::Win32(w) = h.as_raw() {
+                    self.printing.owner = w.hwnd.get();
+                }
+            }
+        }
         self.poll_scan();
         self.poll_rows();
         self.poll_loader();
