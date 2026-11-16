@@ -13,6 +13,19 @@ and can be converted to any of the other formats; Chitra does not write HEIF.
 
 ## Install
 
+Download the files from the
+[latest release](https://github.com/nishantnkumar-cell/Chitra/releases/latest),
+or pick a version on the
+[Releases page](https://github.com/nishantnkumar-cell/Chitra/releases). No
+GitHub account is needed. Builds marked **Pre-release** are test builds.
+
+| System | File |
+| --- | --- |
+| Windows 10 or 11, installer | `Chitra-Setup-<version>-x64.exe` |
+| Windows, portable (no install) | `chitra.exe`, and `chitra-cli.exe` for scripts |
+| Linux, Flatpak | `Chitra-<version>-x86_64.flatpak` |
+| Linux, tarball | `chitra-<version>-linux-x86_64.tar.gz` |
+
 ### Windows
 
 Run `Chitra-Setup-<version>-x64.exe` (Windows 10 or 11, 64-bit). It installs
