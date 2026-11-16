@@ -44,7 +44,8 @@ pub struct LoadedImage {
     pub tex_size: [usize; 2],
     /// Size of the full image in pixels, after EXIF orientation.
     pub full_size: [u32; 2],
-    pub format: Format,
+    /// `None` for a video's thumbnail.
+    pub format: Option<Format>,
     pub color: String,
     pub decode_time: Duration,
     pub exif: Vec<(String, String)>,
@@ -218,6 +219,9 @@ fn load(
     shared: &Shared,
 ) -> Option<Result<Arc<LoadedImage>, String>> {
     let start = Instant::now();
+    if chitra::video::is_video_path(&req.path) {
+        return video_thumb(req, ctx, shared, start);
+    }
     let animation = req.kind == Kind::Display;
     let decoded = match decode_file(&req.path, DecodeOptions { animation }) {
         Ok(d) => d,
@@ -276,10 +280,60 @@ fn load(
         frames,
         tex_size,
         full_size,
-        format: decoded.format,
+        format: Some(decoded.format),
         color: format!("{:?}", decoded.image.color()),
         decode_time: start.elapsed(),
         exif,
         has_icc: decoded.icc.is_some(),
+    })))
+}
+
+/// A video's thumbnail: its first picture, from a silent player.
+fn video_thumb(
+    req: &Request,
+    ctx: &egui::Context,
+    shared: &Shared,
+    start: Instant,
+) -> Option<Result<Arc<LoadedImage>, String>> {
+    let info = chitra::video::probe(&req.path).ok();
+    let frame =
+        match super::video::first_frame(&req.path, req.max_side, &|| !still_wanted(shared, req))? {
+            Ok(f) => f,
+            Err(e) => return Some(Err(e)),
+        };
+    let [w, h] = frame.size;
+    let bytes: Vec<u8> = frame.pixels.iter().flat_map(|c| c.to_array()).collect();
+    let mut img = DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w as u32, h as u32, bytes)?);
+    let turns = info
+        .as_ref()
+        .map_or(0, |i| super::video_view::upright_turns(i, frame.size));
+    img = match turns {
+        1 => img.rotate90(),
+        2 => img.rotate180(),
+        3 => img.rotate270(),
+        _ => img,
+    };
+    let max = req.max_side.max(16);
+    if img.width() > max || img.height() > max {
+        img = resize::thumbnail(&img, max, max);
+    }
+    let rgba = img.into_rgba8();
+    let tex_size = [rgba.width() as usize, rgba.height() as usize];
+    let color = ColorImage::from_rgba_unmultiplied(tex_size, rgba.as_raw());
+    let options = TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+    let texture = ctx.load_texture(req.path.to_string_lossy(), color, options);
+    let full_size = info
+        .map(|i| i.display_size())
+        .filter(|s| s[0] > 0)
+        .unwrap_or([tex_size[0] as u32, tex_size[1] as u32]);
+    Some(Ok(Arc::new(LoadedImage {
+        frames: vec![(texture, Duration::ZERO)],
+        tex_size,
+        full_size,
+        format: None,
+        color: String::new(),
+        decode_time: start.elapsed(),
+        exif: Vec::new(),
+        has_icc: false,
     })))
 }

@@ -18,7 +18,8 @@ here runs on your own machine and costs nothing; GitHub Actions is optional.
 | | Windows 10/11 | Linux |
 |---|---|---|
 | Rust 1.85+ | `winget install Rustlang.Rustup` | `curl https://sh.rustup.rs -sSf \| sh` |
-| C toolchain | Visual Studio Build Tools with "Desktop development with C++" | `build-essential pkg-config libxkbcommon-dev libwayland-dev` (Debian/Ubuntu) |
+| C toolchain | Visual Studio Build Tools with "Desktop development with C++" | `build-essential pkg-config libxkbcommon-dev libwayland-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev` (Debian/Ubuntu) |
+| Video tests | nothing (Media Foundation is part of Windows) | `gstreamer1.0-plugins-good gstreamer1.0-libav` |
 | Installer tool | Inno Setup 6: `winget install JRSoftware.InnoSetup` | `flatpak flatpak-builder desktop-file-utils appstream` for the Flatpak |
 | Git | `winget install Git.Git` | your distribution's `git` |
 
@@ -122,7 +123,7 @@ much faster and does not mix with the Windows `target` folder.
 
    ```
    sudo apt update
-   sudo apt install -y build-essential pkg-config git curl libxkbcommon-dev libwayland-dev flatpak flatpak-builder desktop-file-utils appstream
+   sudo apt install -y build-essential pkg-config git curl libxkbcommon-dev libwayland-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good gstreamer1.0-libav flatpak flatpak-builder desktop-file-utils appstream
    ```
 
 3. Install Rust:

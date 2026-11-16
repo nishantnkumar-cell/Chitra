@@ -91,6 +91,9 @@ pub struct Settings {
     pub folder_overview: bool,
     pub thumb_size: f32,
     pub theme: Theme,
+    /// Video sound, 0 to 1.
+    pub video_volume: f32,
+    pub video_muted: bool,
 }
 
 impl Default for Settings {
@@ -105,6 +108,8 @@ impl Default for Settings {
             folder_overview: true,
             thumb_size: 160.0,
             theme: Theme::System,
+            video_volume: 1.0,
+            video_muted: false,
         }
     }
 }
@@ -191,6 +196,12 @@ impl Settings {
                         s.theme = th;
                     }
                 }
+                "video_volume" => {
+                    if let Ok(n) = value.parse::<f32>() {
+                        s.video_volume = (n / 100.0).clamp(0.0, 1.0);
+                    }
+                }
+                "video_muted" => s.video_muted = flag,
                 "thumbnail_size" => {
                     if let Ok(n) = value.parse::<f32>() {
                         s.thumb_size = n.clamp(*THUMB_SIZES.start(), *THUMB_SIZES.end());
@@ -213,7 +224,9 @@ impl Settings {
              sort_descending = {}\n\
              folder_overview = {}\n\
              thumbnail_size = {}\n\
-             theme = {}\n",
+             theme = {}\n\
+             video_volume = {}\n\
+             video_muted = {}\n",
             self.slideshow_secs,
             self.wheel.key(),
             self.right_click_fit,
@@ -223,6 +236,8 @@ impl Settings {
             self.folder_overview,
             self.thumb_size.round(),
             self.theme.key(),
+            (self.video_volume * 100.0).round(),
+            self.video_muted,
         )
     }
 }
@@ -243,6 +258,8 @@ mod tests {
             folder_overview: false,
             thumb_size: 200.0,
             theme: Theme::Light,
+            video_volume: 0.35,
+            video_muted: true,
         };
         assert_eq!(Settings::parse(&s.to_text()), s);
     }

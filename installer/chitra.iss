@@ -98,6 +98,20 @@ Root: HKA; Subkey: "Software\Classes\.heif\OpenWithProgids"; ValueType: string; 
 Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".heif"; ValueData: ""; Tasks: openwith
 Root: HKA; Subkey: "Software\Classes\.hif\OpenWithProgids"; ValueType: string; ValueName: "Chitra.Image"; ValueData: ""; Flags: uninsdeletevalue; Tasks: openwith
 Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".hif"; ValueData: ""; Tasks: openwith
+; Phone videos get their own ProgId so Windows labels them as videos.
+Root: HKA; Subkey: "Software\Classes\Chitra.Video"; ValueType: string; ValueData: "Video"; Flags: uninsdeletekey; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Chitra.Video\DefaultIcon"; ValueType: string; ValueData: "{app}\chitra.exe,0"; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Chitra.Video\shell\open\command"; ValueType: string; ValueData: """{app}\chitra.exe"" ""%1"""; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\.mp4\OpenWithProgids"; ValueType: string; ValueName: "Chitra.Video"; ValueData: ""; Flags: uninsdeletevalue; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".mp4"; ValueData: ""; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\.m4v\OpenWithProgids"; ValueType: string; ValueName: "Chitra.Video"; ValueData: ""; Flags: uninsdeletevalue; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".m4v"; ValueData: ""; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\.mov\OpenWithProgids"; ValueType: string; ValueName: "Chitra.Video"; ValueData: ""; Flags: uninsdeletevalue; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".mov"; ValueData: ""; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\.3gp\OpenWithProgids"; ValueType: string; ValueName: "Chitra.Video"; ValueData: ""; Flags: uninsdeletevalue; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".3gp"; ValueData: ""; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\.3g2\OpenWithProgids"; ValueType: string; ValueName: "Chitra.Video"; ValueData: ""; Flags: uninsdeletevalue; Tasks: openwith
+Root: HKA; Subkey: "Software\Classes\Applications\chitra.exe\SupportedTypes"; ValueType: string; ValueName: ".3g2"; ValueData: ""; Tasks: openwith
 ; "Browse with Chitra" on folders opens the folder overview.
 Root: HKA; Subkey: "Software\Classes\Directory\shell\Chitra"; ValueType: string; ValueData: "Browse with Chitra"; Flags: uninsdeletekey; Tasks: openwith
 Root: HKA; Subkey: "Software\Classes\Directory\shell\Chitra"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\chitra.exe,0"; Tasks: openwith

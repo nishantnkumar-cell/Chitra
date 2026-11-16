@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::format::is_supported_path;
+use crate::video::is_video_path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SortKey {
@@ -63,11 +64,20 @@ impl Entry {
 
 /// Supported images directly inside `dir` (not recursive), unsorted.
 pub fn list_images(dir: &Path) -> io::Result<Vec<Entry>> {
+    list_files(dir, false)
+}
+
+/// Supported images and phone videos directly inside `dir`, unsorted.
+pub fn list_media(dir: &Path) -> io::Result<Vec<Entry>> {
+    list_files(dir, true)
+}
+
+fn list_files(dir: &Path, videos: bool) -> io::Result<Vec<Entry>> {
     let mut out = Vec::new();
     for item in fs::read_dir(dir)? {
         let Ok(item) = item else { continue };
         let path = item.path();
-        if !is_supported_path(&path) {
+        if !(is_supported_path(&path) || videos && is_video_path(&path)) {
             continue;
         }
         let Ok(meta) = item.metadata() else { continue };
@@ -87,12 +97,14 @@ pub fn list_images(dir: &Path) -> io::Result<Vec<Entry>> {
 /// them depth-first in natural order (each folder's photos in the given sort
 /// order). For folders whose photos are all in sub-folders, such as
 /// Trips/2024 Goa. Stops after `max_dirs` folders so a huge tree stays quick.
+/// With `videos`, phone videos count as photos.
 pub fn images_below(
     dir: &Path,
     limit: usize,
     max_dirs: usize,
     key: SortKey,
     descending: bool,
+    videos: bool,
 ) -> Vec<Entry> {
     let mut out = Vec::new();
     let mut stack: Vec<PathBuf> = list_subfolders(dir).into_iter().rev().collect();
@@ -102,7 +114,7 @@ pub fn images_below(
             break;
         }
         visited += 1;
-        let mut photos = list_images(&d).unwrap_or_default();
+        let mut photos = list_files(&d, videos).unwrap_or_default();
         sort(&mut photos, key, descending);
         photos.truncate(limit - out.len());
         out.extend(photos);
@@ -250,13 +262,31 @@ mod tests {
             fs::write(p, b"").unwrap();
         }
         let names = |v: Vec<Entry>| -> Vec<String> { v.iter().map(|e| e.file_name()).collect() };
-        let all = images_below(&dir, 10, 100, SortKey::Name, false);
-        let two = images_below(&dir, 2, 100, SortKey::Name, false);
-        let one_dir = images_below(&dir, 10, 1, SortKey::Name, false);
+        let all = images_below(&dir, 10, 100, SortKey::Name, false, false);
+        let two = images_below(&dir, 2, 100, SortKey::Name, false, false);
+        let one_dir = images_below(&dir, 10, 1, SortKey::Name, false, false);
         fs::remove_dir_all(&dir).unwrap();
         assert_eq!(names(all), ["a.jpg", "c.jpg", "x.png", "b.jpg"]);
         assert_eq!(names(two), ["a.jpg", "c.jpg"]);
         assert_eq!(names(one_dir), ["a.jpg", "c.jpg"]);
+    }
+
+    #[test]
+    fn videos_are_listed_only_when_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["a.jpg", "IMG_0002.MOV", "VID_3.mp4", "notes.txt"] {
+            fs::write(dir.path().join(f), b"").unwrap();
+        }
+        let names = |v: Vec<Entry>| -> Vec<String> {
+            let mut v: Vec<String> = v.iter().map(|e| e.file_name()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(names(list_images(dir.path()).unwrap()), ["a.jpg"]);
+        assert_eq!(
+            names(list_media(dir.path()).unwrap()),
+            ["IMG_0002.MOV", "VID_3.mp4", "a.jpg"]
+        );
     }
 
     #[test]

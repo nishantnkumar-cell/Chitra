@@ -2,12 +2,12 @@
 Type=Application
 Name=Chitra
 GenericName=Image Viewer
-Comment=View photos and convert them in batches
+Comment=View photos and phone videos, and convert photos in batches
 Exec=chitra %f
 Icon=io.github.nishantnkumar_cell.Chitra
 Terminal=false
 Categories=Graphics;Viewer;Photography;RasterGraphics;2DGraphics;
-Keywords=photo;picture;image;viewer;converter;JPEG;HEIC;AVIF;WebP;JXL;
-MimeType=image/jpeg;image/jxl;image/png;image/apng;image/vnd.mozilla.apng;image/gif;image/bmp;image/x-bmp;image/x-ms-bmp;image/webp;image/avif;image/heic;image/heif;image/heic-sequence;image/heif-sequence;
+Keywords=photo;picture;image;viewer;converter;video;JPEG;HEIC;AVIF;WebP;JXL;MP4;MOV;
+MimeType=image/jpeg;image/jxl;image/png;image/apng;image/vnd.mozilla.apng;image/gif;image/bmp;image/x-bmp;image/x-ms-bmp;image/webp;image/avif;image/heic;image/heif;image/heic-sequence;image/heif-sequence;video/mp4;video/quicktime;video/x-m4v;video/3gpp;video/3gpp2;
 StartupNotify=true
 StartupWMClass=io.github.nishantnkumar_cell.Chitra
