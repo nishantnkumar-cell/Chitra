@@ -241,6 +241,10 @@ keeps up while you move the sliders.
 
 - **Size**: 1x (sharpen only) to 4x. Enlarging uses Lanczos3, the sharpest of
   the usual resampling filters.
+- **Reduce noise**: 0 to 100 (30 by default). Smooths grain and the colour
+  blotches of old JPEGs before enlarging, keeping edges sharp, so the
+  enlargement and the sharpening don't make the noise worse. Too high looks
+  waxy.
 - **Sharpen**: 0 to 300%; 80% is a good start. The sharpening works on
   brightness only, so colours do not fringe.
 - **Radius**: the size of the detail to bring out. **Auto** picks one for the
@@ -256,7 +260,7 @@ makes enlargements smooth and crisp, and stays fast and small.
 From the command line, `--scale` and `--sharpen` work with any output format:
 
 ```
-chitra-cli convert old\ --to jpg --scale 2 --sharpen 80 --rename "{name}_2x"
+chitra-cli convert old\ --to jpg --scale 2 --denoise 30 --sharpen 80 --rename "{name}_2x"
 ```
 
 ## Settings

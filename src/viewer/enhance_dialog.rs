@@ -29,6 +29,7 @@ const MAX_PREVIEW_SIDE: f32 = 4096.0;
 /// Largest preview, in output pixels.
 const MAX_PREVIEW_PIXELS: f32 = 16_000_000.0;
 const SIDE_W: f32 = 290.0;
+const DEFAULT_DENOISE: f32 = 30.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
@@ -77,6 +78,8 @@ pub struct EnhanceDialog {
     radius: f32,
     radius_auto: bool,
     threshold: f32,
+    /// Noise reduction, 0 to 100.
+    denoise: f32,
 
     /// Points on screen per output pixel; `None` until the first frame picks one.
     zoom: Option<f32>,
@@ -114,6 +117,7 @@ impl Default for EnhanceDialog {
             radius: enhance::default_radius(2),
             radius_auto: true,
             threshold: 3.0,
+            denoise: DEFAULT_DENOISE,
             zoom: None,
             center: Pos2::ZERO,
             preview: None,
@@ -150,6 +154,7 @@ impl EnhanceDialog {
             amount: self.amount / 100.0,
             radius: self.radius,
             threshold: self.threshold,
+            denoise: self.denoise,
         }
     }
 
@@ -360,11 +365,14 @@ impl EnhanceDialog {
 
         // Labels over the panes.
         let (out_w, out_h) = (full.width() * self.scale, full.height() * self.scale);
-        let what = if self.amount > 0.0 {
+        let mut what = if self.amount > 0.0 {
             format!("{}x, sharpen {:.0}%", self.scale, self.amount)
         } else {
             format!("{}x, no sharpening", self.scale)
         };
+        if self.denoise > 0.0 {
+            what += &format!(", noise {:.0}", self.denoise);
+        }
         let (labels, _) =
             ui.allocate_exact_size(Vec2::new(pane.x * 2.0 + gap, label_h), Sense::hover());
         let font = egui::TextStyle::Body.resolve(ui.style());
@@ -546,6 +554,12 @@ impl EnhanceDialog {
         }
         ui.add_space(6.0);
 
+        ui.label("Reduce noise");
+        ui.add(egui::Slider::new(&mut self.denoise, 0.0..=100.0).step_by(5.0))
+            .on_hover_text(
+                "Smooths grain and the colour blotches of old JPEGs before enlarging, \
+                 keeping edges sharp. 0 turns it off; too high looks waxy.",
+            );
         ui.label("Sharpen");
         ui.add(
             egui::Slider::new(&mut self.amount, 0.0..=300.0)
@@ -582,6 +596,7 @@ impl EnhanceDialog {
             self.radius_auto = true;
             self.radius = enhance::default_radius(self.scale);
             self.threshold = 3.0;
+            self.denoise = DEFAULT_DENOISE;
         }
     }
 
