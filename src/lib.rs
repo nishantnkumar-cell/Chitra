@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ai;
 pub mod convert;
 pub mod decode;
 pub mod denoise;

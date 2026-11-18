@@ -254,14 +254,45 @@ keeps up while you move the sliders.
 
 **Save** writes this photo or every photo in the folder as JPEG, JPEG XL or
 PNG, named `{name}_2x` (and so on) by default, next to the originals or in a
-folder you choose. This does not invent detail the way AI upscalers do; it
-makes enlargements smooth and crisp, and stays fast and small.
+folder you choose. The Classic method does not invent detail; it makes
+enlargements smooth and crisp, and stays fast and small.
 
-From the command line, `--scale` and `--sharpen` work with any output format:
+### AI method (optional)
+
+**Method: AI** uses Real-ESRGAN (the small "general x4v3" model) to rebuild
+detail and remove noise and JPEG artefacts while enlarging. It runs inside
+Chitra in plain Rust on the processor, with no graphics card, Python or
+ONNX runtime needed. The model is not part of the download: the first time
+you pick AI, **Download model** fetches two files (about 4.9 MB each) from
+the Real-ESRGAN releases on GitHub into the Chitra settings folder
+(`%APPDATA%\Chitra\models`, `~/Library/Application Support/Chitra/models` or
+`~/.config/Chitra/models`) and checks their SHA-256. Without internet access
+(the Flatpak has none), download
+[realesr-general-x4v3.pth](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth)
+and
+[realesr-general-wdn-x4v3.pth](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth)
+yourself and use **Choose files…**.
+
+- **AI noise removal**: 0 keeps more fine texture, 100 removes the most noise.
+  It blends the two model files.
+- **Sharpen** starts at 0% for AI, since the result is already sharp.
+
+The AI always works at 4x and then resizes to the size you chose. It is much
+slower than Classic: about half a minute for a 960 x 1280 photo at 4x on a
+4-core processor, so the preview shows a smaller area. Files are named
+`{name}_2x_ai` and so on.
+
+From the command line, `--scale` and `--sharpen` work with any output format,
+and `--ai` switches to the AI method (4x unless `--scale` says otherwise):
 
 ```
 chitra-cli convert old\ --to jpg --scale 2 --denoise 30 --sharpen 80 --rename "{name}_2x"
+chitra-cli ai-model download
+chitra-cli convert old\ --to png --ai --ai-noise 50 --rename "{name}_4x_ai"
 ```
+
+`chitra-cli ai-model status` reports whether the model is installed, and
+`chitra-cli ai-model import FILE...` installs files you downloaded yourself.
 
 ## Settings
 

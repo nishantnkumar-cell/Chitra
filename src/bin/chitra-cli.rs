@@ -20,6 +20,10 @@ fn main() -> ExitCode {
             args.remove(0);
             cli::run_passport(args)
         }
+        Some("ai-model") => {
+            args.remove(0);
+            cli::run_ai_model(args)
+        }
         Some("info") => {
             args.remove(0);
             cli::run_info(args)
@@ -34,7 +38,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprint!(
-                "chitra-cli runs `convert`, `info` and `passport`; open photos with chitra.exe.\n\n{}",
+                "chitra-cli runs `convert`, `info`, `passport` and `ai-model`; open photos with chitra.exe.\n\n{}",
                 cli::USAGE
             );
             ExitCode::from(2)

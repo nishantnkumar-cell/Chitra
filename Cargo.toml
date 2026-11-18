@@ -32,6 +32,9 @@ natord = "1.0.9"
 arboard = "3.7.0"
 heifer = "0.5.0"
 oxideav-avif = "0.0.15"
+# Matrix products for the optional AI upscaler (matrixmultiply picks AVX/FMA
+# or NEON at run time).
+ndarray = { version = "0.17", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Safe sendmsg, to hand the print portal the PDF as an open file.
@@ -171,6 +174,12 @@ opt-level = 3
 opt-level = 3
 
 [profile.release.package.fast_image_resize]
+opt-level = 3
+
+[profile.release.package.ndarray]
+opt-level = 3
+
+[profile.release.package.matrixmultiply]
 opt-level = 3
 
 [profile.release.package.rayon]

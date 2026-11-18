@@ -232,6 +232,8 @@ Exit codes: 0 all converted, 1 some files failed (or none were found), 2 bad arg
 | `--sharpen PERCENT` | Sharpen 0-300 (try 80); see [Upscale and sharpen](#upscale-and-sharpen) |
 | `--sharpen-radius PX` | Sharpen radius in output pixels (default: by scale) |
 | `--sharpen-threshold N` | Sharpen brightness changes under N (0-255) less (default 3) |
+| `--ai` | Upscale with the optional AI model (Real-ESRGAN); needs `chitra-cli ai-model download` once |
+| `--ai-noise N` | AI noise removal 0-100 (default 50) |
 | `-o, --out DIR` | Output folder (default: next to each input) |
 | `-n, --rename PATTERN` | Tokens `{name}` `{parent}` `{n}` `{n:03}` `{ext}` |
 | `-r, --recursive` | Include sub-folders; the structure is mirrored under `--out` |
@@ -274,14 +276,45 @@ keeps up while you move the sliders.
 
 **Save** writes this photo or every photo in the folder as JPEG, JPEG XL or
 PNG, named `{name}_2x` (and so on) by default, next to the originals or in a
-folder you choose. This does not invent detail the way AI upscalers do; it
-makes enlargements smooth and crisp, and stays fast and small.
+folder you choose. The Classic method does not invent detail; it makes
+enlargements smooth and crisp, and stays fast and small.
 
-From the command line, `--scale` and `--sharpen` work with any output format:
+### AI method (optional)
+
+**Method: AI** uses Real-ESRGAN (the small "general x4v3" model) to rebuild
+detail and remove noise and JPEG artefacts while enlarging. It runs inside
+Chitra in plain Rust on the processor, with no graphics card, Python or
+ONNX runtime needed. The model is not part of the download: the first time
+you pick AI, **Download model** fetches two files (about 4.9 MB each) from
+the Real-ESRGAN releases on GitHub into the Chitra settings folder
+(`%APPDATA%\Chitra\models`, `~/Library/Application Support/Chitra/models` or
+`~/.config/Chitra/models`) and checks their SHA-256. Without internet access
+(the Flatpak has none), download
+[realesr-general-x4v3.pth](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth)
+and
+[realesr-general-wdn-x4v3.pth](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth)
+yourself and use **Choose files…**.
+
+- **AI noise removal**: 0 keeps more fine texture, 100 removes the most noise.
+  It blends the two model files.
+- **Sharpen** starts at 0% for AI, since the result is already sharp.
+
+The AI always works at 4x and then resizes to the size you chose. It is much
+slower than Classic: about half a minute for a 960 x 1280 photo at 4x on a
+4-core processor, so the preview shows a smaller area. Files are named
+`{name}_2x_ai` and so on.
+
+From the command line, `--scale` and `--sharpen` work with any output format,
+and `--ai` switches to the AI method (4x unless `--scale` says otherwise):
 
 ```
 chitra-cli convert old\ --to jpg --scale 2 --denoise 30 --sharpen 80 --rename "{name}_2x"
+chitra-cli ai-model download
+chitra-cli convert old\ --to png --ai --ai-noise 50 --rename "{name}_4x_ai"
 ```
+
+`chitra-cli ai-model status` reports whether the model is installed, and
+`chitra-cli ai-model import FILE...` installs files you downloaded yourself.
 
 ## Passport photos
 
@@ -342,6 +375,10 @@ AGPL-3.0. `cargo build --release --no-default-features` leaves them out, and
 then writes WebP and JPEG XL lossless only and does not repack JPEGs;
 viewing and every other format are identical in both builds. The lossy encoders do not build on Apple Silicon
 yet, so macOS ARM builds need `--no-default-features`.
+
+The optional AI upscaling model (Real-ESRGAN `realesr-general-x4v3`, by Xintao
+Wang and others) is BSD-3-Clause licensed. It is not included in Chitra;
+Chitra downloads it from the Real-ESRGAN GitHub releases only when you ask.
 
 ## Memory safety
 

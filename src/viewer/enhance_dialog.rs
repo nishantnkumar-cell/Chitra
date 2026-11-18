@@ -80,6 +80,15 @@ pub struct EnhanceDialog {
     threshold: f32,
     /// Noise reduction, 0 to 100.
     denoise: f32,
+    /// Enlarge with the AI model.
+    ai: bool,
+    /// AI noise removal, 0 to 100.
+    ai_noise: f32,
+    /// The AI model files are in place.
+    ai_ready: bool,
+    /// A model download or import running in the background.
+    ai_job: Option<Receiver<Result<(), String>>>,
+    ai_msg: Option<String>,
 
     /// Points on screen per output pixel; `None` until the first frame picks one.
     zoom: Option<f32>,
@@ -118,6 +127,11 @@ impl Default for EnhanceDialog {
             radius_auto: true,
             threshold: 3.0,
             denoise: DEFAULT_DENOISE,
+            ai: false,
+            ai_noise: 50.0,
+            ai_ready: false,
+            ai_job: None,
+            ai_msg: None,
             zoom: None,
             center: Pos2::ZERO,
             preview: None,
@@ -128,7 +142,7 @@ impl Default for EnhanceDialog {
             quality: 92,
             lossless: false,
             out_dir: None,
-            rename: auto_name(2),
+            rename: auto_name(2, false),
             rename_auto: true,
             conflict: ConflictPolicy::Rename,
             keep_metadata: true,
@@ -139,12 +153,19 @@ impl Default for EnhanceDialog {
     }
 }
 
-fn auto_name(scale: u32) -> String {
-    if scale == 1 {
-        "{name}_sharp".into()
+fn auto_name(scale: u32, ai: bool) -> String {
+    let base = if scale == 1 {
+        "{name}_sharp".to_string()
     } else {
         format!("{{name}}_{scale}x")
-    }
+    };
+    if ai { base + "_ai" } else { base }
+}
+
+/// Largest preview, in output pixels. The AI model is much slower, so its
+/// preview covers less.
+fn max_preview_pixels(ai: bool) -> f32 {
+    if ai { 2_500_000.0 } else { MAX_PREVIEW_PIXELS }
 }
 
 impl EnhanceDialog {
@@ -155,12 +176,15 @@ impl EnhanceDialog {
             radius: self.radius,
             threshold: self.threshold,
             denoise: self.denoise,
+            ai: self.ai,
+            ai_noise: self.ai_noise / 100.0,
         }
     }
 
     /// Open the window on `path`, loading it unless it is already loaded.
     pub fn open_on(&mut self, path: Option<PathBuf>) {
         self.open = true;
+        self.ai_ready = chitra::ai::installed();
         self.follow(path);
     }
 
@@ -206,12 +230,33 @@ impl EnhanceDialog {
             self.loading = None;
             self.pending = None;
         }
-        if self.loading.is_some() || self.pending.is_some() || self.running.is_some() {
+        if self.loading.is_some()
+            || self.pending.is_some()
+            || self.running.is_some()
+            || self.ai_job.is_some()
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.ai_job {
+            match rx.try_recv() {
+                Ok(r) => {
+                    self.ai_job = None;
+                    self.ai_ready = chitra::ai::installed();
+                    self.ai_msg = match r {
+                        Ok(()) if self.ai_ready => None,
+                        Ok(()) => {
+                            Some("Both model files are needed; choose the other one too.".into())
+                        }
+                        Err(e) => Some(e),
+                    };
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => self.ai_job = None,
+            }
+        }
         if let Some((_, rx)) = &self.loading {
             match rx.try_recv() {
                 Ok(Ok((path, full))) => {
@@ -326,8 +371,9 @@ impl EnhanceDialog {
         if h * s > MAX_PREVIEW_SIDE {
             z_min = z_min.max(pane.y / MAX_PREVIEW_SIDE);
         }
-        if w * s * h * s > MAX_PREVIEW_PIXELS {
-            z_min = z_min.max((pane.x * pane.y / MAX_PREVIEW_PIXELS).sqrt());
+        let cap = max_preview_pixels(self.ai);
+        if w * s * h * s > cap {
+            z_min = z_min.max((pane.x * pane.y / cap).sqrt());
         }
         let z_max = (8.0 / ppp).max(z_min);
         let actual = 1.0 / ppp;
@@ -370,7 +416,9 @@ impl EnhanceDialog {
         } else {
             format!("{}x, no sharpening", self.scale)
         };
-        if self.denoise > 0.0 {
+        if self.ai {
+            what += &format!(", AI noise {:.0}", self.ai_noise);
+        } else if self.denoise > 0.0 {
             what += &format!(", noise {:.0}", self.denoise);
         }
         let (labels, _) =
@@ -491,6 +539,9 @@ impl EnhanceDialog {
     /// Start enhancing the visible part (with some room to pan) unless the
     /// current or pending preview already covers it.
     fn request(&mut self, full: &Arc<DynamicImage>, visible: Region) {
+        if self.ai && !self.ai_ready {
+            return;
+        }
         let opts = self.opts();
         let covers = |r: &Request| r.opts == opts && contains(r.region, visible);
         if self.preview.as_ref().is_some_and(|p| covers(&p.req)) {
@@ -501,7 +552,12 @@ impl EnhanceDialog {
             let _ = req;
             return;
         }
-        let region = widen(visible, full.width(), full.height(), self.scale);
+        // Room to pan, except for the slow AI preview.
+        let region = if self.ai {
+            visible
+        } else {
+            widen(visible, full.width(), full.height(), self.scale)
+        };
         let req = Request { region, opts };
         let (tx, rx) = mpsc::channel();
         let full = full.clone();
@@ -537,7 +593,7 @@ impl EnhanceDialog {
                         self.radius = enhance::default_radius(s);
                     }
                     if self.rename_auto {
-                        self.rename = auto_name(s);
+                        self.rename = auto_name(s, self.ai);
                     }
                 }
             }
@@ -554,12 +610,55 @@ impl EnhanceDialog {
         }
         ui.add_space(6.0);
 
-        ui.label("Reduce noise");
-        ui.add(egui::Slider::new(&mut self.denoise, 0.0..=100.0).step_by(5.0))
-            .on_hover_text(
-                "Smooths grain and the colour blotches of old JPEGs before enlarging, \
-                 keeping edges sharp. 0 turns it off; too high looks waxy.",
+        ui.label("Method");
+        ui.horizontal(|ui| {
+            let classic = ui
+                .selectable_label(!self.ai, "Classic")
+                .on_hover_text("Lanczos3: fast, faithful, adds no detail");
+            let ai = ui.selectable_label(self.ai, "AI").on_hover_text(
+                "Real-ESRGAN: draws plausible fine detail and removes JPEG artefacts. \
+                 Slow (about half a minute for a 1 MP photo at 4x) and needs a \
+                 one-time 10 MB download.",
             );
+            let want = if ai.clicked() {
+                Some(true)
+            } else if classic.clicked() {
+                Some(false)
+            } else {
+                None
+            };
+            if let Some(want) = want
+                && want != self.ai
+            {
+                self.ai = want;
+                // The AI result is already crisp; classic needs sharpening.
+                self.amount = if want { 0.0 } else { 80.0 };
+                if self.rename_auto {
+                    self.rename = auto_name(self.scale, self.ai);
+                }
+                self.ai_ready = chitra::ai::installed();
+            }
+        });
+        if self.ai && !self.ai_ready {
+            self.ai_setup(ui);
+        }
+        ui.add_space(6.0);
+
+        if self.ai {
+            ui.label("AI noise removal");
+            ui.add(egui::Slider::new(&mut self.ai_noise, 0.0..=100.0).step_by(5.0))
+                .on_hover_text(
+                    "How much grain and JPEG noise the model removes. Lower keeps \
+                     more texture; higher is cleaner but smoother.",
+                );
+        } else {
+            ui.label("Reduce noise");
+            ui.add(egui::Slider::new(&mut self.denoise, 0.0..=100.0).step_by(5.0))
+                .on_hover_text(
+                    "Smooths grain and the colour blotches of old JPEGs before enlarging, \
+                     keeping edges sharp. 0 turns it off; too high looks waxy.",
+                );
+        }
         ui.label("Sharpen");
         ui.add(
             egui::Slider::new(&mut self.amount, 0.0..=300.0)
@@ -592,11 +691,63 @@ impl EnhanceDialog {
                  Raise it for noisy or heavily compressed photos.",
             );
         if ui.small_button("Reset").clicked() {
-            self.amount = 80.0;
+            self.amount = if self.ai { 0.0 } else { 80.0 };
+            self.ai_noise = 50.0;
             self.radius_auto = true;
             self.radius = enhance::default_radius(self.scale);
             self.threshold = 3.0;
             self.denoise = DEFAULT_DENOISE;
+        }
+    }
+
+    /// Getting the AI model: download it, or pick files downloaded by hand.
+    fn ai_setup(&mut self, ui: &mut egui::Ui) {
+        ui.add(
+            egui::Label::new(
+                "The AI model is not installed. It is downloaded once (about 10 MB, \
+                 Real-ESRGAN by Xintao Wang et al., BSD licence) and checked before use.",
+            )
+            .wrap(),
+        );
+        if self.ai_job.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Getting the model…");
+            });
+            return;
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Download").clicked() {
+                let (tx, rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(chitra::ai::download());
+                });
+                self.ai_job = Some(rx);
+                self.ai_msg = None;
+            }
+            if ui
+                .button("Choose files…")
+                .on_hover_text(format!(
+                    "If the download does not work here, get these two files in a \
+                     browser and choose them:\n{}\n{}",
+                    chitra::ai::GENERAL.url,
+                    chitra::ai::WEAK_DENOISE.url
+                ))
+                .clicked()
+                && let Some(files) = rfd::FileDialog::new()
+                    .add_filter("Model", &["pth"])
+                    .pick_files()
+            {
+                let (tx, rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(chitra::ai::import(&files).map(|_| ()));
+                });
+                self.ai_job = Some(rx);
+                self.ai_msg = None;
+            }
+        });
+        if let Some(m) = &self.ai_msg {
+            ui.colored_label(ui.visuals().error_fg_color, m);
         }
     }
 
@@ -710,7 +861,10 @@ impl EnhanceDialog {
             if inputs.len() == 1 { "" } else { "s" }
         );
         if ui
-            .add_enabled(!inputs.is_empty(), egui::Button::new(label))
+            .add_enabled(
+                !inputs.is_empty() && (!self.ai || self.ai_ready),
+                egui::Button::new(label),
+            )
             .clicked()
         {
             self.start(inputs);
@@ -758,7 +912,7 @@ impl EnhanceDialog {
         opts.enhance = Some(self.opts());
         opts.out_dir = self.out_dir.clone();
         opts.rename = if self.rename.trim().is_empty() {
-            auto_name(self.scale)
+            auto_name(self.scale, self.ai)
         } else {
             self.rename.clone()
         };
