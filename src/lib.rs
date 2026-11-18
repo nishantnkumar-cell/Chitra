@@ -8,6 +8,7 @@
 pub mod convert;
 pub mod decode;
 pub mod encode;
+pub mod enhance;
 pub mod folder;
 pub mod format;
 pub mod metadata;

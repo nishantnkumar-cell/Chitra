@@ -118,6 +118,7 @@ Chitra lists the rest of the folder and you move through it with the keyboard.
 | Ctrl+O / Ctrl+Shift+O | Open file / open folder |
 | Ctrl+S | Convert dialog |
 | Ctrl+P (Cmd+P on Mac) | Print |
+| Ctrl+E | Upscale and sharpen |
 | Ctrl+Shift+P | Passport photo |
 | Ctrl+, | Settings |
 | F5 | Refresh folder |
@@ -226,6 +227,10 @@ Exit codes: 0 all converted, 1 some files failed (or none were found), 2 bad arg
 | `--lossless` | Lossless WebP / JPEG XL (see below) |
 | `--reencode-jpeg` | JPEG to JPEG XL: re-encode the pixels instead of repacking the JPEG |
 | `-s, --resize SIZE` | `2048` longest side, `50%`, or `1920x1080` box; never enlarges unless `--upscale` |
+| `--scale N` | Enlarge 1x, 2x, 3x or 4x (Lanczos3); not with `--resize` |
+| `--sharpen PERCENT` | Sharpen 0-300 (try 80); see [Upscale and sharpen](#upscale-and-sharpen) |
+| `--sharpen-radius PX` | Sharpen radius in output pixels (default: by scale) |
+| `--sharpen-threshold N` | Sharpen brightness changes under N (0-255) less (default 3) |
 | `-o, --out DIR` | Output folder (default: next to each input) |
 | `-n, --rename PATTERN` | Tokens `{name}` `{parent}` `{n}` `{n:03}` `{ext}` |
 | `-r, --recursive` | Include sub-folders; the structure is mirrored under `--out` |
@@ -243,6 +248,35 @@ Conversions run in parallel, write through a temporary file (so a failure
 never leaves a half-written file or damages an input being overwritten), and
 end with a report listing any failures. EXIF orientation is applied to the
 pixels and reset in the copied EXIF, so outputs always display upright.
+
+## Upscale and sharpen
+
+**Enhance** in the toolbar (or `Ctrl+E`) enlarges the current photo 1x, 2x, 3x
+or 4x and sharpens it, for old or small photos such as 960 x 1280 phone
+pictures. The window shows the original and the result side by side; drag
+either one to move both, use the wheel to zoom, and double-click to switch
+between fit and 100%. Only the part on screen is worked out, so the preview
+keeps up while you move the sliders.
+
+- **Size**: 1x (sharpen only) to 4x. Enlarging uses Lanczos3, the sharpest of
+  the usual resampling filters.
+- **Sharpen**: 0 to 300%; 80% is a good start. The sharpening works on
+  brightness only, so colours do not fringe.
+- **Radius**: the size of the detail to bring out. **Auto** picks one for the
+  size (1.0 px at 1x up to 2.2 px at 4x).
+- **Ignore noise below**: small changes in brightness (grain, JPEG blocks) are
+  sharpened less. Raise it for noisy or heavily compressed photos.
+
+**Save** writes this photo or every photo in the folder as JPEG, JPEG XL or
+PNG, named `{name}_2x` (and so on) by default, next to the originals or in a
+folder you choose. This does not invent detail the way AI upscalers do; it
+makes enlargements smooth and crisp, and stays fast and small.
+
+From the command line, `--scale` and `--sharpen` work with any output format:
+
+```
+chitra-cli convert old\ --to jpg --scale 2 --sharpen 80 --rename "{name}_2x"
+```
 
 ## Passport photos
 

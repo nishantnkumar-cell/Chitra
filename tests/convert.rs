@@ -324,3 +324,78 @@ fn console_cli_converts() {
     let no_command = Command::new(exe).output().unwrap();
     assert_eq!(no_command.status.code(), Some(2));
 }
+
+#[test]
+fn upscale_and_sharpen_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let inputs: Vec<PathBuf> = ["a.jpg", "b.png", "c.jpg"]
+        .iter()
+        .map(|n| {
+            let p = dir.path().join(n);
+            let f = Format::from_path(&p).unwrap();
+            write_image(&p, f, 60, 40);
+            p
+        })
+        .collect();
+    for (to, scale) in [(Format::Jpeg, 2), (Format::JpegXl, 3), (Format::Png, 4)] {
+        let mut opts = ConvertOptions::new(to);
+        let mut e = chitra::enhance::EnhanceOptions::new(scale);
+        e.amount = 1.2;
+        opts.enhance = Some(e);
+        opts.out_dir = Some(dir.path().join(format!("out_{}", to.extension())));
+        opts.rename = "{name}_up".into();
+        let report = run(plan(&inputs, &opts), &opts, |_| {});
+        assert_eq!(report.converted(), 3, "to {to:?}: {:?}", report.results);
+        for r in &report.results {
+            let d = decode_file(&r.job.output, DecodeOptions::default()).unwrap();
+            assert_eq!(d.format, to);
+            assert_eq!(
+                (d.image.width(), d.image.height()),
+                (60 * scale, 40 * scale)
+            );
+            assert!(
+                r.job
+                    .output
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .ends_with("_up")
+            );
+        }
+    }
+}
+
+#[test]
+fn cli_scale_and_sharpen() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("old.jpg");
+    write_image(&src, Format::Jpeg, 30, 20);
+    let out = Command::new(env!("CARGO_BIN_EXE_chitra-cli"))
+        .args([
+            "convert",
+            "--to",
+            "png",
+            "--scale",
+            "2x",
+            "--sharpen",
+            "80",
+            "--quiet",
+        ])
+        .arg(&src)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let d = decode_file(&dir.path().join("old.png"), DecodeOptions::default()).unwrap();
+    assert_eq!((d.image.width(), d.image.height()), (60, 40));
+
+    let bad = Command::new(env!("CARGO_BIN_EXE_chitra-cli"))
+        .args(["convert", "--to", "png", "--scale", "5"])
+        .arg(&src)
+        .output()
+        .unwrap();
+    assert!(!bad.status.success());
+}

@@ -37,6 +37,13 @@ CONVERT OPTIONS:
                              repacking the JPEG data losslessly
     -s, --resize SIZE        2048 = longest side, 50% = scale, 1920x1080 = fit in box
         --upscale            Allow --resize to enlarge small images
+        --scale N            Enlarge 1x, 2x, 3x or 4x (Lanczos3), for old or
+                             small photos; not with --resize
+        --sharpen PERCENT    Sharpen by this amount, 0-300 (try 80)
+        --sharpen-radius PX  Sharpen radius in output pixels (default: by scale,
+                             1.0 at 1x up to 2.2 at 4x)
+        --sharpen-threshold N  Leave brightness changes under N (0-255) mostly
+                             alone, so noise and JPEG blocks stay quiet (default 3)
     -o, --out DIR            Output folder (default: next to each input)
     -n, --rename PATTERN     Output name without extension (default {name})
                              Tokens: {name} {parent} {n} {n:03} {ext}
@@ -76,6 +83,7 @@ EXAMPLES:
     chitra convert photos/ --to webp --out web/ --resize 2048
     chitra convert *.png --to jpg -q 85 --rename \"holiday_{n:03}\"
     chitra convert scans/ -r --to jxl --out archive/
+    chitra convert old/ --to jpg --scale 2 --sharpen 80 --rename \"{name}_2x\"
     chitra passport me.jpg -c uk --crown 1520,610 --chin 1530,1640 --sheet 6x4
 ";
 
@@ -99,6 +107,10 @@ fn parse_convert(
     let mut inputs = Vec::new();
     let mut dry_run = false;
     let mut quiet = false;
+    let mut scale: Option<u32> = None;
+    let mut sharpen: Option<f32> = None;
+    let mut radius: Option<f32> = None;
+    let mut threshold: Option<f32> = None;
 
     while let Some(arg) = parser.next()? {
         match arg {
@@ -116,6 +128,44 @@ fn parse_convert(
                 opts.resize = Some(parser.value()?.parse_with(|s| s.parse::<ResizeSpec>())?);
             }
             Long("upscale") => opts.upscale = true,
+            Long("scale") => {
+                let v = parser.value()?.string()?;
+                let n: u32 = v
+                    .trim()
+                    .trim_end_matches(['x', 'X'])
+                    .parse()
+                    .map_err(|_| "--scale must be 1, 2, 3 or 4")?;
+                if !(1..=4).contains(&n) {
+                    return Err("--scale must be 1, 2, 3 or 4".into());
+                }
+                scale = Some(n);
+            }
+            Long("sharpen") => {
+                let v = parser.value()?.string()?;
+                let p: f32 = v
+                    .trim()
+                    .trim_end_matches('%')
+                    .parse()
+                    .map_err(|_| "--sharpen takes a number, such as 80")?;
+                if !(0.0..=300.0).contains(&p) {
+                    return Err("--sharpen must be between 0 and 300".into());
+                }
+                sharpen = Some(p / 100.0);
+            }
+            Long("sharpen-radius") => {
+                let r: f32 = parser.value()?.parse()?;
+                if !(0.1..=10.0).contains(&r) {
+                    return Err("--sharpen-radius must be between 0.1 and 10".into());
+                }
+                radius = Some(r);
+            }
+            Long("sharpen-threshold") => {
+                let t: f32 = parser.value()?.parse()?;
+                if !(0.0..=255.0).contains(&t) {
+                    return Err("--sharpen-threshold must be between 0 and 255".into());
+                }
+                threshold = Some(t);
+            }
             Long("lossless") => opts.lossless = true,
             Long("reencode-jpeg") => opts.jpeg_repack = false,
             Short('o') | Long("out") => opts.out_dir = Some(PathBuf::from(parser.value()?)),
@@ -143,6 +193,20 @@ fn parse_convert(
     opts.format = format.ok_or("missing --to FORMAT (jpg, jxl, png, gif, bmp, webp or avif)")?;
     if inputs.is_empty() {
         return Err("no input files or folders given".into());
+    }
+    if scale.is_some() || sharpen.is_some() || radius.is_some() || threshold.is_some() {
+        if opts.resize.is_some() {
+            return Err("use either --resize or --scale/--sharpen, not both".into());
+        }
+        let mut e = chitra::enhance::EnhanceOptions::new(scale.unwrap_or(1));
+        e.amount = sharpen.unwrap_or(0.0);
+        if let Some(r) = radius {
+            e.radius = r;
+        }
+        if let Some(t) = threshold {
+            e.threshold = t;
+        }
+        opts.enhance = Some(e);
     }
     Ok((opts, inputs, dry_run, quiet))
 }
