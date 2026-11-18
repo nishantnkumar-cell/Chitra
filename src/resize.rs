@@ -3,7 +3,8 @@
 
 use std::str::FromStr;
 
-use fast_image_resize::{FilterType, IntoImageView, ResizeAlg, ResizeOptions, Resizer};
+pub use fast_image_resize::FilterType;
+use fast_image_resize::{IntoImageView, ResizeAlg, ResizeOptions, Resizer};
 use image::DynamicImage;
 
 /// How the converter should size its output.
@@ -90,6 +91,22 @@ pub fn resize(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
     } else {
         FilterType::CatmullRom
     };
+    resize_with(image, width, height, filter)
+}
+
+/// Resize with a chosen filter (the upscaler uses Lanczos3 both ways).
+pub fn resize_with(
+    image: &DynamicImage,
+    width: u32,
+    height: u32,
+    filter: FilterType,
+) -> DynamicImage {
+    if image.width() == width && image.height() == height {
+        return image.clone();
+    }
+    if image.pixel_type().is_none() {
+        return image.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+    }
     let mut dst = DynamicImage::new(width, height, image.color());
     let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(filter));
     match Resizer::new().resize(image, &mut dst, &opts) {

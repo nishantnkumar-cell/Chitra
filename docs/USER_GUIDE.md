@@ -13,6 +13,7 @@ works offline and never connects to the internet.
 - [Photo info](#photo-info)
 - [Copy, delete and refresh](#copy-delete-and-refresh)
 - [Converting photos](#converting-photos)
+- [Upscale and sharpen](#upscale-and-sharpen)
 - [Settings](#settings)
 - [Keyboard and mouse reference](#keyboard-and-mouse-reference)
 - [Troubleshooting](#troubleshooting)
@@ -229,6 +230,35 @@ chitra-cli info photo.jpg
 Run `chitra-cli convert --help` for every option. Exit codes: `0` all
 converted, `1` some files failed or none were found, `2` invalid options.
 
+## Upscale and sharpen
+
+**Enhance** in the toolbar (or `Ctrl+E`) enlarges the current photo 1x, 2x, 3x
+or 4x and sharpens it, for old or small photos such as 960 x 1280 phone
+pictures. The window shows the original and the result side by side; drag
+either one to move both, use the wheel to zoom, and double-click to switch
+between fit and 100%. Only the part on screen is worked out, so the preview
+keeps up while you move the sliders.
+
+- **Size**: 1x (sharpen only) to 4x. Enlarging uses Lanczos3, the sharpest of
+  the usual resampling filters.
+- **Sharpen**: 0 to 300%; 80% is a good start. The sharpening works on
+  brightness only, so colours do not fringe.
+- **Radius**: the size of the detail to bring out. **Auto** picks one for the
+  size (1.0 px at 1x up to 2.2 px at 4x).
+- **Ignore noise below**: small changes in brightness (grain, JPEG blocks) are
+  sharpened less. Raise it for noisy or heavily compressed photos.
+
+**Save** writes this photo or every photo in the folder as JPEG, JPEG XL or
+PNG, named `{name}_2x` (and so on) by default, next to the originals or in a
+folder you choose. This does not invent detail the way AI upscalers do; it
+makes enlargements smooth and crisp, and stays fast and small.
+
+From the command line, `--scale` and `--sharpen` work with any output format:
+
+```
+chitra-cli convert old\ --to jpg --scale 2 --sharpen 80 --rename "{name}_2x"
+```
+
 ## Settings
 
 Click **Settings** or press `Ctrl+,`. Changes apply immediately.
@@ -268,6 +298,7 @@ Press `F1` or **?** in the app for this list.
 | Ctrl+O / Ctrl+Shift+O | Open file / folder |
 | Ctrl+S | Convert |
 | Ctrl+P (Cmd+P on Mac) | Print |
+| Ctrl+E | Upscale and sharpen |
 | Ctrl+Shift+P | Passport photo |
 | Ctrl+, | Settings |
 | F5 | Refresh folder |

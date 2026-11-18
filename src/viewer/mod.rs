@@ -6,6 +6,7 @@ mod convert_dialog;
 #[cfg(target_os = "linux")]
 mod dbus;
 mod desktop_theme;
+mod enhance_dialog;
 mod headerbar;
 mod loader;
 mod passport_dialog;
@@ -29,6 +30,7 @@ use chitra::video::is_video_path;
 
 use convert_dialog::ConvertDialog;
 use desktop_theme::DesktopTheme;
+use enhance_dialog::EnhanceDialog;
 use loader::{Kind, LoadedImage, Loader, Request};
 use passport_dialog::PassportDialog;
 use print::Printing;
@@ -161,6 +163,7 @@ struct App {
     confirm_delete: Option<PathBuf>,
     toast: Option<(String, Instant)>,
     convert: ConvertDialog,
+    enhance: EnhanceDialog,
     passport: PassportDialog,
     printing: Printing,
     /// The video being played, when the single view shows one.
@@ -222,6 +225,7 @@ impl App {
             confirm_delete: None,
             toast: None,
             convert: ConvertDialog::default(),
+            enhance: EnhanceDialog::default(),
             passport: PassportDialog::default(),
             printing: Printing::default(),
             video: None,
@@ -769,6 +773,10 @@ impl App {
         if key(cmd, Key::S) {
             self.convert.open = true;
         }
+        if key(cmd, Key::E) {
+            self.enhance
+                .open_on(self.current_path().filter(|p| !is_video_path(p)));
+        }
         if key(cmd_shift, Key::P) {
             self.passport
                 .open_on(self.current_path().filter(|p| !is_video_path(p)));
@@ -848,6 +856,8 @@ impl App {
                 self.show_settings = false;
             } else if self.passport.open {
                 self.passport.open = false;
+            } else if self.enhance.open {
+                self.enhance.open = false;
             } else if self.convert.open {
                 self.convert.open = false;
             } else if self.slideshow.is_some() {
@@ -1144,6 +1154,16 @@ impl App {
                 self.convert.open = true;
             }
             let photo = has && self.video.is_none();
+            if ui
+                .add_enabled(photo, egui::Button::new("Enhance"))
+                .on_hover_text(
+                    "Upscale 1x to 4x and sharpen, with a side-by-side comparison (Ctrl+E)",
+                )
+                .clicked()
+            {
+                self.enhance
+                    .open_on(self.current_path().filter(|p| !is_video_path(p)));
+            }
             if ui
                 .add_enabled(photo, egui::Button::new("Passport"))
                 .on_hover_text("Passport or visa photo from this photo (Ctrl+Shift+P)")
@@ -1883,6 +1903,11 @@ impl App {
             self.convert.finished = false;
             self.rescan();
         }
+        self.enhance.show(ctx, current.as_ref(), &folder);
+        if self.enhance.finished {
+            self.enhance.finished = false;
+            self.rescan();
+        }
         self.passport.show(ctx);
         if self.passport.saved {
             self.passport.saved = false;
@@ -2131,6 +2156,7 @@ const HELP: &[(&str, &str)] = &[
     ("Ctrl+C / Ctrl+Shift+C", "Copy image / copy path"),
     ("Ctrl+O / Ctrl+Shift+O", "Open file / folder"),
     ("Ctrl+S", "Convert (batch)"),
+    ("Ctrl+E", "Upscale and sharpen (batch)"),
     ("Ctrl+P", "Print"),
     ("Ctrl+Shift+P", "Passport / visa photo"),
     ("Space or K (video)", "Play / pause"),

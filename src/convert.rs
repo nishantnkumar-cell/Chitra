@@ -12,6 +12,7 @@ use rayon::prelude::*;
 
 use crate::decode::{DecodeOptions, decode_file};
 use crate::encode::{EncodeError, EncodeOptions, JpegRepack, encode, supports_exif};
+use crate::enhance::{self, EnhanceOptions};
 use crate::folder::natural_cmp;
 use crate::format::{Format, is_supported_path};
 use crate::metadata;
@@ -69,6 +70,8 @@ pub struct ConvertOptions {
     pub jpeg_repack: bool,
     pub resize: Option<ResizeSpec>,
     pub upscale: bool,
+    /// Upscale by a whole factor and sharpen, after any `resize`.
+    pub enhance: Option<EnhanceOptions>,
     /// Output folder; `None` writes next to each input.
     pub out_dir: Option<PathBuf>,
     /// Name pattern without extension. Tokens: {name} {n} {n:03} {parent} {ext}.
@@ -92,6 +95,7 @@ impl ConvertOptions {
             jpeg_repack: true,
             resize: None,
             upscale: false,
+            enhance: None,
             out_dir: None,
             rename: "{name}".into(),
             conflict: ConflictPolicy::Rename,
@@ -340,23 +344,34 @@ where
     } else {
         opts.jobs
     };
+    let one = |job: Job| {
+        let t = Instant::now();
+        let outcome = match &job.skip {
+            Some(reason) => Outcome::Skipped(reason.clone()),
+            None => convert_one(&job, opts).unwrap_or_else(Outcome::Failed),
+        };
+        let result = JobResult {
+            job,
+            outcome,
+            elapsed: t.elapsed(),
+        };
+        progress(&result);
+        result
+    };
+    // Upscaled photos are large (a 4x copy is 16 times the pixels) and the
+    // upscaler is itself multithreaded, so take them a couple at a time.
+    let per_round = match opts.enhance {
+        Some(e) if e.scale > 1 && opts.jobs == 0 => 2,
+        _ => usize::MAX,
+    };
     let work = || {
-        jobs.into_par_iter()
-            .map(|job| {
-                let t = Instant::now();
-                let outcome = match &job.skip {
-                    Some(reason) => Outcome::Skipped(reason.clone()),
-                    None => convert_one(&job, opts).unwrap_or_else(Outcome::Failed),
-                };
-                let result = JobResult {
-                    job,
-                    outcome,
-                    elapsed: t.elapsed(),
-                };
-                progress(&result);
-                result
-            })
-            .collect::<Vec<_>>()
+        let mut results = Vec::with_capacity(jobs.len());
+        let mut queue = jobs.into_iter().peekable();
+        while queue.peek().is_some() {
+            let round: Vec<Job> = queue.by_ref().take(per_round).collect();
+            results.extend(round.into_par_iter().map(one).collect::<Vec<_>>());
+        }
+        results
     };
     let results = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
         Ok(pool) => pool.install(work),
@@ -398,6 +413,22 @@ pub fn convert_one(job: &Job, opts: &ConvertOptions) -> Result<Outcome, String> 
         }
     }
 
+    if let Some(e) = &opts.enhance {
+        let (w, h) = enhance::output_size(decoded.image.width(), decoded.image.height(), e.scale)?;
+        // Animated frames are all upscaled too; check they fit in memory.
+        let frames = decoded.frames.len().max(1) as u64;
+        if frames > 1 && w as u64 * h as u64 * frames > enhance::MAX_OUTPUT_PIXELS {
+            return Err(format!(
+                "{frames} frames at {w} x {h} is too large to upscale"
+            ));
+        }
+        decoded.image = enhance::enhance(&decoded.image, e)?;
+        for frame in &mut decoded.frames {
+            let img = image::DynamicImage::ImageRgba8(std::mem::take(&mut frame.image));
+            frame.image = enhance::enhance(&img, e)?.into_rgba8();
+        }
+    }
+
     let mut enc = EncodeOptions::new(opts.format);
     enc.quality = opts.quality;
     enc.lossless = opts.lossless;
@@ -422,7 +453,11 @@ pub fn convert_one(job: &Job, opts: &ConvertOptions) -> Result<Outcome, String> 
 /// JPEG to JPEG XL without touching the pixels, when the options allow it.
 /// `None` means convert the usual way.
 fn repack_jpeg(job: &Job, opts: &ConvertOptions, in_bytes: u64) -> Result<Option<Outcome>, String> {
-    if opts.format != Format::JpegXl || !opts.jpeg_repack || !crate::encode::JPEG_REPACK {
+    if opts.format != Format::JpegXl
+        || !opts.jpeg_repack
+        || !crate::encode::JPEG_REPACK
+        || opts.enhance.is_some()
+    {
         return Ok(None);
     }
     if Format::from_path(&job.input) != Some(Format::Jpeg) {
