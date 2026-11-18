@@ -1,5 +1,5 @@
-//! Upscale and sharpen: a Lanczos3 enlargement by a whole factor (1x to 4x)
-//! followed by an unsharp mask on brightness only.
+//! Upscale and sharpen: optional noise reduction, a Lanczos3 enlargement by a
+//! whole factor (1x to 4x), then an unsharp mask on brightness only.
 //!
 //! Sharpening the brightness (and adding the same change to red, green and
 //! blue) keeps colours from fringing, and the noise threshold leaves flat
@@ -26,6 +26,8 @@ pub struct EnhanceOptions {
     /// Brightness differences below this (0-255 scale) are sharpened less, so
     /// noise and JPEG blocks stay quiet.
     pub threshold: f32,
+    /// Noise reduction before enlarging, 0 (off) to 100; see `denoise`.
+    pub denoise: f32,
 }
 
 impl EnhanceOptions {
@@ -36,6 +38,7 @@ impl EnhanceOptions {
             amount: 0.8,
             radius: default_radius(scale),
             threshold: 3.0,
+            denoise: 0.0,
         }
     }
 
@@ -63,9 +66,16 @@ pub fn output_size(width: u32, height: u32, scale: u32) -> Result<(u32, u32), St
     Ok((w as u32, h as u32))
 }
 
-/// Upscale then sharpen.
+/// Reduce noise, upscale, then sharpen.
 pub fn enhance(image: &DynamicImage, opts: &EnhanceOptions) -> Result<DynamicImage, String> {
     let (w, h) = output_size(image.width(), image.height(), opts.scale)?;
+    let clean;
+    let image = if opts.denoise > 0.0 {
+        clean = crate::denoise::denoise(image, opts.denoise);
+        &clean
+    } else {
+        image
+    };
     let mut out = resize_with(image, w, h, FilterType::Lanczos3);
     if opts.sharpens() {
         sharpen(&mut out, opts.amount, opts.radius, opts.threshold);
@@ -83,7 +93,8 @@ pub fn enhance_region(
     (x, y, w, h): (u32, u32, u32, u32),
 ) -> Result<DynamicImage, String> {
     let s = opts.scale.clamp(1, 4);
-    let margin = 4 + (3.0 * opts.radius / s as f32).ceil() as u32;
+    let margin =
+        4 + (3.0 * opts.radius / s as f32).ceil() as u32 + crate::denoise::reach(opts.denoise);
     let x0 = x.saturating_sub(margin);
     let y0 = y.saturating_sub(margin);
     let x1 = (x + w + margin).min(image.width());
@@ -169,7 +180,7 @@ fn luma<T: Sample>(px: &[T], color: usize) -> f32 {
     }
 }
 
-fn kernel(sigma: f32) -> Vec<f32> {
+pub(crate) fn kernel(sigma: f32) -> Vec<f32> {
     let r = (3.0 * sigma).ceil().max(1.0) as usize;
     let mut k: Vec<f32> = (0..=2 * r)
         .map(|i| {
@@ -342,7 +353,8 @@ mod tests {
                 ((x * y) % 256) as u8,
             ])
         }));
-        let opts = EnhanceOptions::new(3);
+        let mut opts = EnhanceOptions::new(3);
+        opts.denoise = 70.0;
         let full = enhance(&src, &opts).unwrap().to_rgb8();
         let part = enhance_region(&src, &opts, (20, 10, 16, 12))
             .unwrap()

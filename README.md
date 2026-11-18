@@ -228,6 +228,7 @@ Exit codes: 0 all converted, 1 some files failed (or none were found), 2 bad arg
 | `--reencode-jpeg` | JPEG to JPEG XL: re-encode the pixels instead of repacking the JPEG |
 | `-s, --resize SIZE` | `2048` longest side, `50%`, or `1920x1080` box; never enlarges unless `--upscale` |
 | `--scale N` | Enlarge 1x, 2x, 3x or 4x (Lanczos3); not with `--resize` |
+| `--denoise N` | Reduce grain and JPEG colour blotches first, 0-100 (try 30) |
 | `--sharpen PERCENT` | Sharpen 0-300 (try 80); see [Upscale and sharpen](#upscale-and-sharpen) |
 | `--sharpen-radius PX` | Sharpen radius in output pixels (default: by scale) |
 | `--sharpen-threshold N` | Sharpen brightness changes under N (0-255) less (default 3) |
@@ -260,6 +261,10 @@ keeps up while you move the sliders.
 
 - **Size**: 1x (sharpen only) to 4x. Enlarging uses Lanczos3, the sharpest of
   the usual resampling filters.
+- **Reduce noise**: 0 to 100 (30 by default). Smooths grain and the colour
+  blotches of old JPEGs before enlarging, keeping edges sharp, so the
+  enlargement and the sharpening don't make the noise worse. Too high looks
+  waxy.
 - **Sharpen**: 0 to 300%; 80% is a good start. The sharpening works on
   brightness only, so colours do not fringe.
 - **Radius**: the size of the detail to bring out. **Auto** picks one for the
@@ -275,7 +280,7 @@ makes enlargements smooth and crisp, and stays fast and small.
 From the command line, `--scale` and `--sharpen` work with any output format:
 
 ```
-chitra-cli convert old\ --to jpg --scale 2 --sharpen 80 --rename "{name}_2x"
+chitra-cli convert old\ --to jpg --scale 2 --denoise 30 --sharpen 80 --rename "{name}_2x"
 ```
 
 ## Passport photos

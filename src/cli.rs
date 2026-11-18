@@ -39,6 +39,8 @@ CONVERT OPTIONS:
         --upscale            Allow --resize to enlarge small images
         --scale N            Enlarge 1x, 2x, 3x or 4x (Lanczos3), for old or
                              small photos; not with --resize
+        --denoise N          Reduce grain and JPEG colour blotches first,
+                             0-100 (try 30)
         --sharpen PERCENT    Sharpen by this amount, 0-300 (try 80)
         --sharpen-radius PX  Sharpen radius in output pixels (default: by scale,
                              1.0 at 1x up to 2.2 at 4x)
@@ -83,7 +85,7 @@ EXAMPLES:
     chitra convert photos/ --to webp --out web/ --resize 2048
     chitra convert *.png --to jpg -q 85 --rename \"holiday_{n:03}\"
     chitra convert scans/ -r --to jxl --out archive/
-    chitra convert old/ --to jpg --scale 2 --sharpen 80 --rename \"{name}_2x\"
+    chitra convert old/ --to jpg --scale 2 --denoise 30 --sharpen 80 --rename \"{name}_2x\"
     chitra passport me.jpg -c uk --crown 1520,610 --chin 1530,1640 --sheet 6x4
 ";
 
@@ -111,6 +113,7 @@ fn parse_convert(
     let mut sharpen: Option<f32> = None;
     let mut radius: Option<f32> = None;
     let mut threshold: Option<f32> = None;
+    let mut denoise: Option<f32> = None;
 
     while let Some(arg) = parser.next()? {
         match arg {
@@ -159,6 +162,13 @@ fn parse_convert(
                 }
                 radius = Some(r);
             }
+            Long("denoise") => {
+                let d: f32 = parser.value()?.parse()?;
+                if !(0.0..=100.0).contains(&d) {
+                    return Err("--denoise must be between 0 and 100".into());
+                }
+                denoise = Some(d);
+            }
             Long("sharpen-threshold") => {
                 let t: f32 = parser.value()?.parse()?;
                 if !(0.0..=255.0).contains(&t) {
@@ -194,7 +204,12 @@ fn parse_convert(
     if inputs.is_empty() {
         return Err("no input files or folders given".into());
     }
-    if scale.is_some() || sharpen.is_some() || radius.is_some() || threshold.is_some() {
+    if scale.is_some()
+        || sharpen.is_some()
+        || radius.is_some()
+        || threshold.is_some()
+        || denoise.is_some()
+    {
         if opts.resize.is_some() {
             return Err("use either --resize or --scale/--sharpen, not both".into());
         }
@@ -206,6 +221,7 @@ fn parse_convert(
         if let Some(t) = threshold {
             e.threshold = t;
         }
+        e.denoise = denoise.unwrap_or(0.0);
         opts.enhance = Some(e);
     }
     Ok((opts, inputs, dry_run, quiet))
