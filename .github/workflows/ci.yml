@@ -3,7 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # GitHub's release form keeps the case typed, so accept V0.2.1 too.
+    tags: ['v*', 'V*']
   pull_request:
   workflow_dispatch:
 
@@ -48,12 +49,42 @@ jobs:
         with:
           command: check advisories bans sources
 
+  # The release builds wait for Windows and Linux only: macOS runners are
+  # sometimes unavailable for a long time, and no release file is built on
+  # macOS, so a stuck macOS job must not hold back the installers.
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # GStreamer with H.264 and AAC decoders, as desktops ship it.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+      # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
+      # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
+      - run: cargo test
+      - run: cargo test --no-default-features
+      # Plays phone clips through the system player (Media Foundation,
+      # AVFoundation or GStreamer) on the main thread, as the viewer does.
+      - name: Play phone videos
+        shell: bash
+        run: |
+          cargo run --quiet --bin chitra -- --play-test tests/data/h264-aac.mp4
+          cargo run --quiet --bin chitra -- --play-test tests/data/portrait.mov
+      # Windows needs the HEVC Video Extensions from the Store for HEVC.
+      - name: Play an HEVC video
+        if: runner.os != 'Windows'
+        run: cargo run --quiet --bin chitra -- --play-test tests/data/hevc.mov
+
+  test-macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -240,7 +271,7 @@ jobs:
   # installer and the Linux packages attached. It stays a draft until someone
   # publishes it.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')
     needs: [windows-release, linux-release]
     runs-on: ubuntu-latest
     permissions:
