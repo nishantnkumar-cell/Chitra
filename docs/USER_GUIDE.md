@@ -44,6 +44,12 @@ Flatpak (recommended):
 flatpak install --user Chitra-<version>-x86_64.flatpak
 ```
 
+On Ubuntu 24.04+ or Debian 13+ you can use the .deb package instead:
+
+```
+sudo apt install ./chitra_<version>_amd64.deb      # sudo apt remove chitra removes it
+```
+
 Or the tarball, which installs into your home folder without root:
 
 ```

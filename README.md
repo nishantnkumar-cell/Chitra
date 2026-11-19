@@ -60,6 +60,13 @@ or KDE neon; on Ubuntu run `sudo apt install flatpak` first):
 flatpak install --user Chitra-<version>-x86_64.flatpak
 ```
 
+**Debian / Ubuntu package** (Ubuntu 24.04 or later, Debian 13 or later;
+installs system-wide and can check for updates itself):
+
+```
+sudo apt install ./chitra_<version>_amd64.deb      # sudo apt remove chitra removes it
+```
+
 **Tarball** (no Flatpak needed; installs into `~/.local`, no root):
 
 ```
@@ -84,11 +91,12 @@ Files for every format it reads. On both desktops it:
 - on GNOME, draws a GNOME-style title bar (drag to move, double-click to
   maximize); on KDE Plasma, KWin draws its usual one.
 
-The Flatpak has no network access. It can read and write your home folder and
+The Flatpak has no network access, so it cannot download AI models or check
+for updates: get model files in a browser and use **Choose files…**. It can read and write your home folder and
 external drives (`/media`, `/run/media`, `/mnt`) so the folder browser and batch
 converter work anywhere you keep photos. Builds target x86-64-v2 CPUs (Intel
 since 2008, AMD since 2011) and use faster AVX2 code at run time where the CPU
-has it. CI builds both packages on every push (the `chitra-linux-x86_64`
+has it. CI builds all three packages on every push (the `chitra-linux-x86_64`
 artifact) and checks that they install and run.
 
 ## Viewer
