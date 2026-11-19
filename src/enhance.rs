@@ -27,7 +27,14 @@ pub struct EnhanceOptions {
     /// noise and JPEG blocks stay quiet.
     pub threshold: f32,
     /// Noise reduction before enlarging, 0 (off) to 100; see `denoise`.
+    /// Not used with `ai`, which removes noise itself.
     pub denoise: f32,
+    /// Enlarge with the AI model instead of Lanczos3; see `ai`.
+    pub ai: bool,
+    /// Which AI model.
+    pub ai_model: crate::ai::Model,
+    /// AI noise removal, 0 (keep noise) to 1 (Fast model only).
+    pub ai_noise: f32,
 }
 
 impl EnhanceOptions {
@@ -39,6 +46,9 @@ impl EnhanceOptions {
             radius: default_radius(scale),
             threshold: 3.0,
             denoise: 0.0,
+            ai: false,
+            ai_model: crate::ai::Model::Fast,
+            ai_noise: 0.5,
         }
     }
 
@@ -69,6 +79,20 @@ pub fn output_size(width: u32, height: u32, scale: u32) -> Result<(u32, u32), St
 /// Reduce noise, upscale, then sharpen.
 pub fn enhance(image: &DynamicImage, opts: &EnhanceOptions) -> Result<DynamicImage, String> {
     let (w, h) = output_size(image.width(), image.height(), opts.scale)?;
+    if opts.ai {
+        // The model enlarges by its own scale; other sizes are resampled.
+        output_size(image.width(), image.height(), opts.ai_model.scale())?;
+        let big = crate::ai::upscale(image, opts.ai_model, opts.ai_noise)?;
+        let mut out = if (big.width(), big.height()) == (w, h) {
+            big
+        } else {
+            resize_with(&big, w, h, FilterType::Lanczos3)
+        };
+        if opts.sharpens() {
+            sharpen(&mut out, opts.amount, opts.radius, opts.threshold);
+        }
+        return Ok(out);
+    }
     let clean;
     let image = if opts.denoise > 0.0 {
         clean = crate::denoise::denoise(image, opts.denoise);
@@ -93,8 +117,12 @@ pub fn enhance_region(
     (x, y, w, h): (u32, u32, u32, u32),
 ) -> Result<DynamicImage, String> {
     let s = opts.scale.clamp(1, 4);
-    let margin =
-        4 + (3.0 * opts.radius / s as f32).ceil() as u32 + crate::denoise::reach(opts.denoise);
+    let before = if opts.ai {
+        opts.ai_model.reach()
+    } else {
+        crate::denoise::reach(opts.denoise)
+    };
+    let margin = 4 + (3.0 * opts.radius / s as f32).ceil() as u32 + before;
     let x0 = x.saturating_sub(margin);
     let y0 = y.saturating_sub(margin);
     let x1 = (x + w + margin).min(image.width());

@@ -399,3 +399,60 @@ fn cli_scale_and_sharpen() {
         .unwrap();
     assert!(!bad.status.success());
 }
+
+#[test]
+fn ai_without_the_model_fails_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("old.png");
+    write_image(&src, Format::Png, 16, 12);
+    let empty = dir.path().join("models");
+    let status = Command::new(env!("CARGO_BIN_EXE_chitra-cli"))
+        .args(["ai-model", "status"])
+        .env("CHITRA_MODELS", &empty)
+        .output()
+        .unwrap();
+    assert!(!status.status.success());
+    let out = Command::new(env!("CARGO_BIN_EXE_chitra-cli"))
+        .args(["convert", "--to", "png", "--ai"])
+        .arg(&src)
+        .env("CHITRA_MODELS", &empty)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout) + String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("ai-model download"), "{text}");
+    assert!(!dir.path().join("old_1.png").exists() && !dir.path().join("old.png.png").exists());
+}
+
+/// Runs the real model when `CHITRA_TEST_MODELS` points at a folder holding it.
+#[test]
+fn ai_upscale_with_the_model() {
+    let Some(models) = std::env::var_os("CHITRA_TEST_MODELS") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("old.jpg");
+    write_image(&src, Format::Jpeg, 40, 30);
+    for (scale, want) in [("2", (80, 60)), ("4", (160, 120))] {
+        let out = Command::new(env!("CARGO_BIN_EXE_chitra-cli"))
+            .args([
+                "convert", "--to", "png", "--ai", "--scale", scale, "--quiet",
+            ])
+            .args(["--rename", &format!("{{name}}_{scale}")])
+            .arg(&src)
+            .env("CHITRA_MODELS", &models)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let d = decode_file(
+            &dir.path().join(format!("old_{scale}.png")),
+            DecodeOptions::default(),
+        )
+        .unwrap();
+        assert_eq!((d.image.width(), d.image.height()), want);
+    }
+}

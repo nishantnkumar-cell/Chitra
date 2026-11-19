@@ -32,6 +32,10 @@ natord = "1.0.9"
 arboard = "3.7.0"
 heifer = "0.5.0"
 oxideav-avif = "0.0.15"
+# Matrix products for the optional AI upscaler (matrixmultiply picks AVX/FMA
+# or NEON at run time).
+ndarray = { version = "0.17", default-features = false, features = ["std"] }
+pollster = { version = "0.4.0", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Safe sendmsg, to hand the print portal the PDF as an open file.
@@ -83,7 +87,9 @@ oxideav-avif = { path = "vendor/oxideav-avif" }
 zenjpeg = { path = "vendor/zenjpeg" }
 
 [features]
-default = ["lossy-encoders", "video"]
+default = ["lossy-encoders", "video", "gpu"]
+# Run the AI upscaler on the graphics card (Vulkan, DirectX 12 or Metal).
+gpu = ["dep:wgpu", "dep:pollster"]
 # Playing phone videos (MP4/MOV with H.264 or HEVC and AAC) with the
 # operating system's own decoders: Media Foundation, AVFoundation or GStreamer.
 video = [
@@ -173,8 +179,33 @@ opt-level = 3
 [profile.release.package.fast_image_resize]
 opt-level = 3
 
+[profile.release.package.ndarray]
+opt-level = 3
+
+[profile.release.package.matrixmultiply]
+opt-level = 3
+
 [profile.release.package.rayon]
 opt-level = 3
 
 [profile.release.package.rayon-core]
 opt-level = 3
+
+# The AI upscaler's graphics card support: one backend per system keeps it small.
+[target.'cfg(windows)'.dependencies.wgpu]
+version = "30.0.1"
+default-features = false
+features = ["std", "parking_lot", "dx12", "wgsl"]
+optional = true
+
+[target.'cfg(target_os = "macos")'.dependencies.wgpu]
+version = "30.0.1"
+default-features = false
+features = ["std", "parking_lot", "metal", "wgsl"]
+optional = true
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies.wgpu]
+version = "30.0.1"
+default-features = false
+features = ["std", "parking_lot", "vulkan", "wgsl"]
+optional = true

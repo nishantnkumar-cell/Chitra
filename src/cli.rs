@@ -20,6 +20,9 @@ USAGE:
     chitra convert [OPTIONS] INPUT... Convert files or folders
     chitra info FILE...               Show format, size and EXIF
     chitra passport [OPTIONS] FILE    Make a passport or visa photo
+    chitra ai-model [list|download MODEL...|import FILE...]
+                                      Get the optional AI upscaling models
+                                      (downloaded with curl)
     chitra --help | --version
 
     chitra-cli convert|info|passport  Same, as a console program for scripts
@@ -39,6 +42,13 @@ CONVERT OPTIONS:
         --upscale            Allow --resize to enlarge small images
         --scale N            Enlarge 1x, 2x, 3x or 4x (Lanczos3), for old or
                              small photos; not with --resize
+        --ai                 Enlarge with an AI model (Real-ESRGAN) instead
+                             of Lanczos3: sharper, real-looking detail, but
+                             slow. Uses the graphics card when it can.
+        --ai-model MODEL     fast (default), best, best-2x, faithful or
+                             drawings; see chitra-cli ai-model list.
+                             Download first: chitra-cli ai-model download MODEL
+        --ai-noise N         AI noise removal 0-100 (default 50; fast only)
         --denoise N          Reduce grain and JPEG colour blotches first,
                              0-100 (try 30)
         --sharpen PERCENT    Sharpen by this amount, 0-300 (try 80)
@@ -114,6 +124,9 @@ fn parse_convert(
     let mut radius: Option<f32> = None;
     let mut threshold: Option<f32> = None;
     let mut denoise: Option<f32> = None;
+    let mut ai = false;
+    let mut ai_noise: Option<f32> = None;
+    let mut ai_model: Option<chitra::ai::Model> = None;
 
     while let Some(arg) = parser.next()? {
         match arg {
@@ -162,6 +175,20 @@ fn parse_convert(
                 }
                 radius = Some(r);
             }
+            Long("ai") => ai = true,
+            Long("ai-model") => {
+                let v = parser.value()?.string()?;
+                ai_model = Some(chitra::ai::Model::from_id(&v).ok_or_else(|| {
+                    format!("unknown --ai-model '{v}' (fast, best, best-2x, faithful or drawings)")
+                })?);
+            }
+            Long("ai-noise") => {
+                let n: f32 = parser.value()?.parse()?;
+                if !(0.0..=100.0).contains(&n) {
+                    return Err("--ai-noise must be between 0 and 100".into());
+                }
+                ai_noise = Some(n / 100.0);
+            }
             Long("denoise") => {
                 let d: f32 = parser.value()?.parse()?;
                 if !(0.0..=100.0).contains(&d) {
@@ -209,6 +236,9 @@ fn parse_convert(
         || radius.is_some()
         || threshold.is_some()
         || denoise.is_some()
+        || ai
+        || ai_model.is_some()
+        || ai_noise.is_some()
     {
         if opts.resize.is_some() {
             return Err("use either --resize or --scale/--sharpen, not both".into());
@@ -222,6 +252,18 @@ fn parse_convert(
             e.threshold = t;
         }
         e.denoise = denoise.unwrap_or(0.0);
+        e.ai = ai || ai_noise.is_some() || ai_model.is_some();
+        if let Some(m) = ai_model {
+            e.ai_model = m;
+        }
+        if let Some(n) = ai_noise {
+            e.ai_noise = n;
+        }
+        if e.ai && scale.is_none() {
+            let s = e.ai_model.scale();
+            e.scale = s;
+            e.radius = chitra::enhance::default_radius(s);
+        }
         opts.enhance = Some(e);
     }
     Ok((opts, inputs, dry_run, quiet))
@@ -573,5 +615,110 @@ pub fn run_info(args: Vec<OsString>) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `chitra ai-model`: list, download or import the optional AI model files.
+pub fn run_ai_model(args: Vec<OsString>) -> ExitCode {
+    use chitra::ai::{self, Model};
+    let mut args = args.into_iter();
+    let cmd = args.next().and_then(|a| a.into_string().ok());
+    let mb = |b: u64| (b as f64 / 1e6).round() as u64;
+    match cmd.as_deref().unwrap_or("list") {
+        "list" | "status" => {
+            let dir = ai::models_dir();
+            println!(
+                "AI upscaling models (folder: {}):\n",
+                dir.as_ref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "none".into())
+            );
+            for m in Model::ALL {
+                println!(
+                    "  {:<9} {:>3} MB  {:<13} {}",
+                    m.id(),
+                    mb(m.download_bytes()),
+                    if ai::installed(m) {
+                        "installed"
+                    } else {
+                        "not installed"
+                    },
+                    m.about()
+                );
+            }
+            println!(
+                "\nGet one with 'chitra-cli ai-model download MODEL', or download its file(s)\n\
+                 by hand and run 'chitra-cli ai-model import FILE...':"
+            );
+            for m in Model::ALL {
+                for f in m.files() {
+                    println!("  {}", f.url);
+                }
+            }
+            if Model::ALL.into_iter().any(ai::installed) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        "download" => {
+            let names: Vec<String> = args.filter_map(|a| a.into_string().ok()).collect();
+            let mut models = Vec::new();
+            for n in &names {
+                if n == "all" {
+                    models.extend(Model::ALL);
+                    continue;
+                }
+                match Model::from_id(n) {
+                    Some(m) => models.push(m),
+                    None => {
+                        eprintln!(
+                            "error: unknown model '{n}' (fast, best, best-2x, faithful, drawings or all)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            if models.is_empty() {
+                models.push(Model::Fast);
+            }
+            for m in models {
+                println!(
+                    "Downloading the {} model (about {} MB)...",
+                    m.label(),
+                    mb(m.download_bytes())
+                );
+                if let Err(e) = ai::download(m) {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+            println!("Done.");
+            ExitCode::SUCCESS
+        }
+        "import" => {
+            let files: Vec<PathBuf> = args.map(PathBuf::from).collect();
+            if files.is_empty() {
+                eprintln!("error: give the downloaded .pth files");
+                return ExitCode::from(2);
+            }
+            match ai::import(&files) {
+                Ok(n) => {
+                    println!("Imported {n} file(s).");
+                    for m in Model::ALL.into_iter().filter(|&m| ai::installed(m)) {
+                        println!("  {} is ready", m.label());
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        other => {
+            eprintln!("error: unknown ai-model command '{other}' (use list, download or import)");
+            ExitCode::from(2)
+        }
     }
 }

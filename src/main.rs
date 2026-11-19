@@ -24,6 +24,11 @@ fn main() -> ExitCode {
             args.remove(0);
             cli::run_passport(args)
         }
+        Some("ai-model") => {
+            platform::attach_console();
+            args.remove(0);
+            cli::run_ai_model(args)
+        }
         Some("info") => {
             platform::attach_console();
             args.remove(0);

@@ -361,6 +361,8 @@ where
     // Upscaled photos are large (a 4x copy is 16 times the pixels) and the
     // upscaler is itself multithreaded, so take them a couple at a time.
     let per_round = match opts.enhance {
+        // The AI model runs its tiles on every core already.
+        Some(e) if e.ai && opts.jobs == 0 => 1,
         Some(e) if e.scale > 1 && opts.jobs == 0 => 2,
         _ => usize::MAX,
     };
