@@ -25,6 +25,8 @@ const PARAM_STRIDE: u64 = 256;
 const ARENA_CAP: u64 = 768 << 20;
 /// Dispatches per submission, so slow cards never run one huge batch.
 const PER_SUBMIT: usize = 48;
+/// Longest wait for one tile before falling back to the processor.
+const TILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 struct Gpu {
     device: wgpu::Device,
@@ -724,7 +726,16 @@ fn run_tile(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    g.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    // A tile takes seconds even on a small integrated GPU; if the driver
+    // stalls, give up and let the processor do the photo instead of
+    // waiting forever.
+    if let Err(e) = g.device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(TILE_TIMEOUT),
+    }) {
+        eprintln!("graphics card did not finish a tile ({e}), using the processor");
+        return None;
+    }
     rx.recv().ok()?.ok()?;
     let data: Vec<f32> = {
         let view = slice.get_mapped_range().ok()?;
