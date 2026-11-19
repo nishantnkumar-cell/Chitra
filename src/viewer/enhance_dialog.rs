@@ -736,11 +736,12 @@ impl EnhanceDialog {
         let missing = chitra::ai::missing(m);
         let partial = missing.len() < m.files().len();
         let bytes: u64 = missing.iter().map(|f| f.bytes).sum();
+        // The Flatpak has no network access, so files come in by hand.
+        let offline = chitra::update::Install::current() == chitra::update::Install::Flatpak;
         ui.add(
             egui::Label::new(if partial {
                 format!(
-                    "The {} model is partly installed. Download fetches the rest \
-                     (about {} MB), or choose the file below if you downloaded it yourself.",
+                    "The {} model is partly installed; about {} MB is still needed.",
                     m.label(),
                     mb(bytes)
                 )
@@ -754,6 +755,15 @@ impl EnhanceDialog {
             })
             .wrap(),
         );
+        if offline {
+            ui.add(
+                egui::Label::new(
+                    "This Flatpak cannot reach the internet. Download the file(s) \
+                     below in your browser, then click Choose files… and pick them.",
+                )
+                .wrap(),
+            );
+        }
         if self.ai_job.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -762,7 +772,7 @@ impl EnhanceDialog {
             return;
         }
         ui.horizontal(|ui| {
-            if ui.button("Download").clicked() {
+            if !offline && ui.button("Download").clicked() {
                 let (tx, rx) = mpsc::channel();
                 std::thread::spawn(move || {
                     let _ = tx.send(chitra::ai::download(m));
