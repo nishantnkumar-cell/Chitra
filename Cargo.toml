@@ -1,6 +1,6 @@
 [package]
 name = "chitra"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Fast, small, memory-safe photo viewer and batch converter (JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF, HEIC)"
