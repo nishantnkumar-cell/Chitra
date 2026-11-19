@@ -422,7 +422,15 @@ pub fn upscale(image: &DynamicImage, model: Model, noise: f32) -> Result<Dynamic
 
     #[cfg(feature = "gpu")]
     let gpu_out = if std::env::var_os("CHITRA_AI_CPU").is_none() {
-        gpu::upscale(&net, src.as_raw(), w, h, tile_override().map(|t| t.0), pad)
+        // wgpu panics on some driver failures (a lost device, for one);
+        // treat that like any other GPU failure and use the processor.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gpu::upscale(&net, src.as_raw(), w, h, tile_override().map(|t| t.0), pad)
+        }))
+        .unwrap_or_else(|_| {
+            gpu::give_up();
+            None
+        })
     } else {
         None
     };

@@ -25,6 +25,16 @@ const PARAM_STRIDE: u64 = 256;
 const ARENA_CAP: u64 = 768 << 20;
 /// Dispatches per submission, so slow cards never run one huge batch.
 const PER_SUBMIT: usize = 48;
+/// Arithmetic per submission (multiply-adds x 2). A small integrated GPU
+/// does a few hundred GFLOP/s here, and Linux resets a GPU whose job runs
+/// for more than a few seconds, losing the device.
+const FLOPS_PER_SUBMIT: f64 = 40e9;
+/// Largest tile on an integrated GPU, so one convolution stays short.
+const INTEGRATED_TILE: usize = 512;
+
+/// Set when the driver reports the device lost (for example after a GPU
+/// reset); nothing is sent to the card after that.
+static LOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Longest wait for one tile before falling back to the processor.
 const TILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
@@ -39,6 +49,8 @@ struct Gpu {
     simple_layout: wgpu::BindGroupLayout,
     dummy: wgpu::Buffer,
     max_binding: u64,
+    /// Largest tile side to use (smaller on integrated GPUs).
+    max_tile: usize,
     /// Set after a failure; the processor is used from then on.
     broken: Mutex<bool>,
 }
@@ -90,6 +102,10 @@ async fn init() -> Option<Gpu> {
     device.on_uncaptured_error(Arc::new(|e| {
         eprintln!("graphics card error: {e}");
     }));
+    device.set_device_lost_callback(|reason, msg| {
+        eprintln!("graphics card lost ({reason:?}): {msg}; using the processor");
+        LOST.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("chitra-ai"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -152,6 +168,11 @@ async fn init() -> Option<Gpu> {
         usage: wgpu::BufferUsages::STORAGE,
     });
     Some(Gpu {
+        max_tile: if info.device_type == wgpu::DeviceType::IntegratedGpu {
+            INTEGRATED_TILE
+        } else {
+            1024
+        },
         name: info.name,
         max_binding: limits
             .max_storage_buffer_binding_size
@@ -550,7 +571,7 @@ pub(super) fn upscale(
     pad: usize,
 ) -> Option<(Vec<f32>, String)> {
     let g = gpu()?;
-    if *g.broken.lock().ok()? {
+    if *g.broken.lock().ok()? || lost() {
         return None;
     }
     let gnet = net_on_gpu(g, net);
@@ -565,7 +586,7 @@ pub(super) fn upscale(
         Some(t) => Some(t).filter(|&t| fits(t))?,
         None => [1024, 768, 512, 448, 384, 320, 256, 192, 128, 96, 64]
             .into_iter()
-            .find(|&t| fits(t))?,
+            .find(|&t| t <= g.max_tile && fits(t))?,
     };
     let s = net.scale();
     let list = tiles(w, h, tile, pad, fold);
@@ -610,6 +631,43 @@ pub(super) fn upscale(
         return None;
     }
     Some((out, g.name.clone()))
+}
+
+fn lost() -> bool {
+    LOST.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Stop using the graphics card for the rest of the session (after a
+/// panic inside the graphics driver layer, for instance).
+pub(super) fn give_up() {
+    LOST.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Floating-point work of one operation, to keep submissions short.
+fn flops(op: &Op) -> f64 {
+    match op {
+        Op::Conv { conv, w, h, .. } => (w * h * conv.cin * conv.cout * 18) as f64,
+        _ => 0.0,
+    }
+}
+
+/// Consecutive runs of operations, each short enough for one submission.
+fn batches(list: &[Op]) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let (mut start, mut work) = (0, 0.0);
+    for (i, op) in list.iter().enumerate() {
+        let f = flops(op);
+        if i > start && (work + f > FLOPS_PER_SUBMIT || i - start >= PER_SUBMIT) {
+            out.push(start..i);
+            start = i;
+            work = 0.0;
+        }
+        work += f;
+    }
+    if start < list.len() {
+        out.push(start..list.len());
+    }
+    out
 }
 
 fn fail(g: &Gpu) {
@@ -658,12 +716,17 @@ fn run_tile(
     g.queue
         .write_buffer(arena, l.input as u64 * 4, &bytes(&padded));
 
-    for (chunk_no, chunk) in list.chunks(PER_SUBMIT).enumerate() {
+    for range in batches(&list) {
+        if lost() {
+            return None;
+        }
+        let first = range.start;
+        let chunk = &list[range];
         let mut enc = g.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_compute_pass(&Default::default());
             for (i, op) in chunk.iter().enumerate() {
-                let at = ((chunk_no * PER_SUBMIT + i) as u64) * PARAM_STRIDE;
+                let at = ((first + i) as u64) * PARAM_STRIDE;
                 let pb = wgpu::BufferBinding {
                     buffer: &pbuf,
                     offset: at,
@@ -729,6 +792,9 @@ fn run_tile(
     // A tile takes seconds even on a small integrated GPU; if the driver
     // stalls, give up and let the processor do the photo instead of
     // waiting forever.
+    if lost() {
+        return None;
+    }
     if let Err(e) = g.device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: Some(TILE_TIMEOUT),
