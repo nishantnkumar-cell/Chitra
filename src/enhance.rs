@@ -31,7 +31,9 @@ pub struct EnhanceOptions {
     pub denoise: f32,
     /// Enlarge with the AI model instead of Lanczos3; see `ai`.
     pub ai: bool,
-    /// AI noise removal, 0 (keep noise) to 1.
+    /// Which AI model.
+    pub ai_model: crate::ai::Model,
+    /// AI noise removal, 0 (keep noise) to 1 (Fast model only).
     pub ai_noise: f32,
 }
 
@@ -45,6 +47,7 @@ impl EnhanceOptions {
             threshold: 3.0,
             denoise: 0.0,
             ai: false,
+            ai_model: crate::ai::Model::Fast,
             ai_noise: 0.5,
         }
     }
@@ -77,10 +80,14 @@ pub fn output_size(width: u32, height: u32, scale: u32) -> Result<(u32, u32), St
 pub fn enhance(image: &DynamicImage, opts: &EnhanceOptions) -> Result<DynamicImage, String> {
     let (w, h) = output_size(image.width(), image.height(), opts.scale)?;
     if opts.ai {
-        // The model always makes 4x; smaller sizes are resampled from it.
-        output_size(image.width(), image.height(), crate::ai::MODEL_SCALE)?;
-        let big = crate::ai::upscale(image, opts.ai_noise)?;
-        let mut out = resize_with(&big, w, h, FilterType::Lanczos3);
+        // The model enlarges by its own scale; other sizes are resampled.
+        output_size(image.width(), image.height(), opts.ai_model.scale())?;
+        let big = crate::ai::upscale(image, opts.ai_model, opts.ai_noise)?;
+        let mut out = if (big.width(), big.height()) == (w, h) {
+            big
+        } else {
+            resize_with(&big, w, h, FilterType::Lanczos3)
+        };
         if opts.sharpens() {
             sharpen(&mut out, opts.amount, opts.radius, opts.threshold);
         }
@@ -111,7 +118,7 @@ pub fn enhance_region(
 ) -> Result<DynamicImage, String> {
     let s = opts.scale.clamp(1, 4);
     let before = if opts.ai {
-        crate::ai::PAD as u32
+        opts.ai_model.reach()
     } else {
         crate::denoise::reach(opts.denoise)
     };

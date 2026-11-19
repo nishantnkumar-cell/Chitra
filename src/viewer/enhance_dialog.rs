@@ -82,6 +82,7 @@ pub struct EnhanceDialog {
     denoise: f32,
     /// Enlarge with the AI model.
     ai: bool,
+    ai_model: chitra::ai::Model,
     /// AI noise removal, 0 to 100.
     ai_noise: f32,
     /// The AI model files are in place.
@@ -128,6 +129,7 @@ impl Default for EnhanceDialog {
             threshold: 3.0,
             denoise: DEFAULT_DENOISE,
             ai: false,
+            ai_model: chitra::ai::Model::Fast,
             ai_noise: 50.0,
             ai_ready: false,
             ai_job: None,
@@ -162,10 +164,14 @@ fn auto_name(scale: u32, ai: bool) -> String {
     if ai { base + "_ai" } else { base }
 }
 
-/// Largest preview, in output pixels. The AI model is much slower, so its
-/// preview covers less.
-fn max_preview_pixels(ai: bool) -> f32 {
-    if ai { 2_500_000.0 } else { MAX_PREVIEW_PIXELS }
+/// Largest preview, in output pixels. The AI models are much slower, so
+/// their preview covers less.
+fn max_preview_pixels(ai: Option<chitra::ai::Model>) -> f32 {
+    match ai {
+        None => MAX_PREVIEW_PIXELS,
+        Some(chitra::ai::Model::Fast) => 2_500_000.0,
+        Some(_) => 600_000.0,
+    }
 }
 
 impl EnhanceDialog {
@@ -177,6 +183,7 @@ impl EnhanceDialog {
             threshold: self.threshold,
             denoise: self.denoise,
             ai: self.ai,
+            ai_model: self.ai_model,
             ai_noise: self.ai_noise / 100.0,
         }
     }
@@ -184,7 +191,7 @@ impl EnhanceDialog {
     /// Open the window on `path`, loading it unless it is already loaded.
     pub fn open_on(&mut self, path: Option<PathBuf>) {
         self.open = true;
-        self.ai_ready = chitra::ai::installed();
+        self.ai_ready = chitra::ai::installed(self.ai_model);
         self.follow(path);
     }
 
@@ -244,12 +251,19 @@ impl EnhanceDialog {
             match rx.try_recv() {
                 Ok(r) => {
                     self.ai_job = None;
-                    self.ai_ready = chitra::ai::installed();
+                    self.ai_ready = chitra::ai::installed(self.ai_model);
                     self.ai_msg = match r {
                         Ok(()) if self.ai_ready => None,
-                        Ok(()) => {
-                            Some("Both model files are needed; choose the other one too.".into())
-                        }
+                        Ok(()) => Some(format!(
+                            "The {} model needs {}; choose the missing file too.",
+                            self.ai_model.label(),
+                            self.ai_model
+                                .files()
+                                .iter()
+                                .map(|f| f.name)
+                                .collect::<Vec<_>>()
+                                .join(" and ")
+                        )),
                         Err(e) => Some(e),
                     };
                 }
@@ -371,7 +385,7 @@ impl EnhanceDialog {
         if h * s > MAX_PREVIEW_SIDE {
             z_min = z_min.max(pane.y / MAX_PREVIEW_SIDE);
         }
-        let cap = max_preview_pixels(self.ai);
+        let cap = max_preview_pixels(self.ai.then_some(self.ai_model));
         if w * s * h * s > cap {
             z_min = z_min.max((pane.x * pane.y / cap).sqrt());
         }
@@ -417,7 +431,14 @@ impl EnhanceDialog {
             format!("{}x, no sharpening", self.scale)
         };
         if self.ai {
-            what += &format!(", AI noise {:.0}", self.ai_noise);
+            what += &format!(", AI {}", self.ai_model.label());
+            if self.ai_model.has_noise_control() {
+                what += &format!(" noise {:.0}", self.ai_noise);
+            }
+            let dev = chitra::ai::last_device();
+            if !dev.is_empty() {
+                what += &format!(", on the {dev}");
+            }
         } else if self.denoise > 0.0 {
             what += &format!(", noise {:.0}", self.denoise);
         }
@@ -617,8 +638,8 @@ impl EnhanceDialog {
                 .on_hover_text("Lanczos3: fast, faithful, adds no detail");
             let ai = ui.selectable_label(self.ai, "AI").on_hover_text(
                 "Real-ESRGAN: draws plausible fine detail and removes JPEG artefacts. \
-                 Slow (about half a minute for a 1 MP photo at 4x) and needs a \
-                 one-time 10 MB download.",
+                 Much slower than Classic, unless a graphics card can run it, and \
+                 each model is a one-time download.",
             );
             let want = if ai.clicked() {
                 Some(true)
@@ -636,22 +657,43 @@ impl EnhanceDialog {
                 if self.rename_auto {
                     self.rename = auto_name(self.scale, self.ai);
                 }
-                self.ai_ready = chitra::ai::installed();
+                self.ai_ready = chitra::ai::installed(self.ai_model);
             }
         });
+        if self.ai {
+            ui.label("AI model");
+            let before = self.ai_model;
+            egui::ComboBox::from_id_salt("ai-model")
+                .selected_text(self.ai_model.label())
+                .show_ui(ui, |ui| {
+                    for m in chitra::ai::Model::ALL {
+                        let mut text = m.label().to_string();
+                        if !chitra::ai::installed(m) {
+                            text += &format!(" ({} MB download)", mb(m.download_bytes()));
+                        }
+                        ui.selectable_value(&mut self.ai_model, m, text)
+                            .on_hover_text(m.about());
+                    }
+                });
+            ui.weak(self.ai_model.about());
+            if self.ai_model != before {
+                self.ai_ready = chitra::ai::installed(self.ai_model);
+                self.ai_msg = None;
+            }
+        }
         if self.ai && !self.ai_ready {
             self.ai_setup(ui);
         }
         ui.add_space(6.0);
 
-        if self.ai {
+        if self.ai && self.ai_model.has_noise_control() {
             ui.label("AI noise removal");
             ui.add(egui::Slider::new(&mut self.ai_noise, 0.0..=100.0).step_by(5.0))
                 .on_hover_text(
                     "How much grain and JPEG noise the model removes. Lower keeps \
                      more texture; higher is cleaner but smoother.",
                 );
-        } else {
+        } else if !self.ai {
             ui.label("Reduce noise");
             ui.add(egui::Slider::new(&mut self.denoise, 0.0..=100.0).step_by(5.0))
                 .on_hover_text(
@@ -702,11 +744,14 @@ impl EnhanceDialog {
 
     /// Getting the AI model: download it, or pick files downloaded by hand.
     fn ai_setup(&mut self, ui: &mut egui::Ui) {
+        let m = self.ai_model;
         ui.add(
-            egui::Label::new(
-                "The AI model is not installed. It is downloaded once (about 10 MB, \
+            egui::Label::new(format!(
+                "The {} model is not installed. It is downloaded once (about {} MB, \
                  Real-ESRGAN by Xintao Wang et al., BSD licence) and checked before use.",
-            )
+                m.label(),
+                mb(m.download_bytes())
+            ))
             .wrap(),
         );
         if self.ai_job.is_some() {
@@ -720,7 +765,7 @@ impl EnhanceDialog {
             if ui.button("Download").clicked() {
                 let (tx, rx) = mpsc::channel();
                 std::thread::spawn(move || {
-                    let _ = tx.send(chitra::ai::download());
+                    let _ = tx.send(chitra::ai::download(m));
                 });
                 self.ai_job = Some(rx);
                 self.ai_msg = None;
@@ -728,10 +773,13 @@ impl EnhanceDialog {
             if ui
                 .button("Choose files…")
                 .on_hover_text(format!(
-                    "If the download does not work here, get these two files in a \
-                     browser and choose them:\n{}\n{}",
-                    chitra::ai::GENERAL.url,
-                    chitra::ai::WEAK_DENOISE.url
+                    "If the download does not work here, get the model's file(s) in a \
+                     browser and choose them:\n{}",
+                    m.files()
+                        .iter()
+                        .map(|f| f.url)
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 ))
                 .clicked()
                 && let Some(files) = rfd::FileDialog::new()
@@ -979,6 +1027,11 @@ fn rgba(img: &DynamicImage) -> ColorImage {
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
     )
+}
+
+/// Bytes as whole megabytes.
+fn mb(bytes: u64) -> u64 {
+    (bytes as f64 / 1e6).round() as u64
 }
 
 #[cfg(test)]

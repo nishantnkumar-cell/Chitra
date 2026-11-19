@@ -35,7 +35,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features --features gpu -- -D warnings
 
   # Known vulnerabilities, yanked crates, crates from outside crates.io and
   # banned networking/TLS crates fail the build (see deny.toml).
@@ -70,7 +70,7 @@ jobs:
       # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
       # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
       - run: cargo test
-      - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features gpu
       # Plays phone clips through the system player (Media Foundation,
       # AVFoundation or GStreamer) on the main thread, as the viewer does.
       - name: Play phone videos
@@ -97,7 +97,7 @@ jobs:
       # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
       # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
       - run: cargo test
-      - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features gpu
       # Plays phone clips through the system player (Media Foundation,
       # AVFoundation or GStreamer) on the main thread, as the viewer does.
       - name: Play phone videos

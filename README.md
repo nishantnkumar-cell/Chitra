@@ -232,8 +232,9 @@ Exit codes: 0 all converted, 1 some files failed (or none were found), 2 bad arg
 | `--sharpen PERCENT` | Sharpen 0-300 (try 80); see [Upscale and sharpen](#upscale-and-sharpen) |
 | `--sharpen-radius PX` | Sharpen radius in output pixels (default: by scale) |
 | `--sharpen-threshold N` | Sharpen brightness changes under N (0-255) less (default 3) |
-| `--ai` | Upscale with the optional AI model (Real-ESRGAN); needs `chitra-cli ai-model download` once |
-| `--ai-noise N` | AI noise removal 0-100 (default 50) |
+| `--ai` | Upscale with an optional AI model (Real-ESRGAN), on the graphics card when there is one |
+| `--ai-model MODEL` | `fast` (default), `best`, `best-2x`, `faithful` or `drawings`; download it first with `chitra-cli ai-model download MODEL` |
+| `--ai-noise N` | AI noise removal 0-100 (default 50; Fast only) |
 | `-o, --out DIR` | Output folder (default: next to each input) |
 | `-n, --rename PATTERN` | Tokens `{name}` `{parent}` `{n}` `{n:03}` `{ext}` |
 | `-r, --recursive` | Include sub-folders; the structure is mirrored under `--out` |
@@ -281,40 +282,55 @@ enlargements smooth and crisp, and stays fast and small.
 
 ### AI method (optional)
 
-**Method: AI** uses Real-ESRGAN (the small "general x4v3" model) to rebuild
-detail and remove noise and JPEG artefacts while enlarging. It runs inside
-Chitra in plain Rust on the processor, with no graphics card, Python or
-ONNX runtime needed. The model is not part of the download: the first time
-you pick AI, **Download model** fetches two files (about 4.9 MB each) from
-the Real-ESRGAN releases on GitHub into the Chitra settings folder
-(`%APPDATA%\Chitra\models`, `~/Library/Application Support/Chitra/models` or
-`~/.config/Chitra/models`) and checks their SHA-256. Without internet access
-(the Flatpak has none), download
-[realesr-general-x4v3.pth](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth)
-and
-[realesr-general-wdn-x4v3.pth](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth)
-yourself and use **Choose files…**.
+**Method: AI** uses Real-ESRGAN models to rebuild detail and remove noise and
+JPEG artefacts while enlarging. They run inside Chitra in plain Rust, on the
+graphics card when there is one (Vulkan on Windows and Linux, DirectX 12 on
+Windows, Metal on macOS) and otherwise on the processor, with no Python, CUDA
+or ONNX runtime needed. Pick one under **AI model**:
 
-- **AI noise removal**: 0 keeps more fine texture, 100 removes the most noise.
-  It blends the two model files.
+| Model | Download | Good for |
+|---|---|---|
+| **Fast** | 10 MB | Quick general model; removes noise and JPEG artefacts |
+| **Best** | 67 MB | Most detail, especially faces and small or old photos |
+| **Best 2x** | 67 MB | The Best model trained for 2x; four times quicker than Best for 2x results |
+| **Faithful** | 67 MB | Invents less texture than Best (fabric, skin, plastic); softer |
+| **Drawings** | 18 MB | Drawings, cartoons and anime: clean lines and flat colour |
+
+No model is part of the Chitra download. The first time you pick one,
+**Download** fetches it from the Real-ESRGAN releases on GitHub into the
+Chitra settings folder (`%APPDATA%\Chitra\models`,
+`~/Library/Application Support/Chitra/models` or `~/.config/Chitra/models`)
+and checks its SHA-256. Without internet access (the Flatpak has none),
+download the file yourself (`chitra-cli ai-model list` prints the links) and
+use **Choose files…**.
+
+- **AI noise removal** (Fast only): 0 keeps more fine texture, 100 removes
+  the most noise. It blends the Fast model's two files.
 - **Sharpen** starts at 0% for AI, since the result is already sharp.
 
-The AI always works at 4x and then resizes to the size you chose. It is much
-slower than Classic: about half a minute for a 960 x 1280 photo at 4x on a
-4-core processor, so the preview shows a smaller area. Files are named
-`{name}_2x_ai` and so on.
+Each model works at its own size (4x, or 2x for Best 2x) and the result is
+then resized to the size you chose. On the processor the AI is much slower
+than Classic: Fast takes about half a minute for a 960 x 1280 photo at 4x on
+a 4-core processor, and the Best, Faithful and Best 2x models take around ten
+times longer, so use them on a graphics card or for small photos. The
+preview shows a smaller area for AI, and the window says whether the graphics
+card or the processor was used. Files are named `{name}_2x_ai` and so on.
 
 From the command line, `--scale` and `--sharpen` work with any output format,
-and `--ai` switches to the AI method (4x unless `--scale` says otherwise):
+and `--ai` switches to the AI method (at the model's own size unless
+`--scale` says otherwise):
 
 ```
 chitra-cli convert old\ --to jpg --scale 2 --denoise 30 --sharpen 80 --rename "{name}_2x"
-chitra-cli ai-model download
+chitra-cli ai-model download fast best
 chitra-cli convert old\ --to png --ai --ai-noise 50 --rename "{name}_4x_ai"
+chitra-cli convert old\ --to png --ai-model best --scale 2 --rename "{name}_2x_best"
 ```
 
-`chitra-cli ai-model status` reports whether the model is installed, and
+`chitra-cli ai-model list` shows each model and whether it is installed,
+`chitra-cli ai-model download all` gets every model, and
 `chitra-cli ai-model import FILE...` installs files you downloaded yourself.
+Set `CHITRA_AI_CPU=1` to keep the AI off the graphics card.
 
 ## Passport photos
 
@@ -376,9 +392,9 @@ then writes WebP and JPEG XL lossless only and does not repack JPEGs;
 viewing and every other format are identical in both builds. The lossy encoders do not build on Apple Silicon
 yet, so macOS ARM builds need `--no-default-features`.
 
-The optional AI upscaling model (Real-ESRGAN `realesr-general-x4v3`, by Xintao
-Wang and others) is BSD-3-Clause licensed. It is not included in Chitra;
-Chitra downloads it from the Real-ESRGAN GitHub releases only when you ask.
+The optional AI upscaling models (Real-ESRGAN, by Xintao Wang and others) are
+BSD-3-Clause licensed. They are not included in Chitra; Chitra downloads them
+from the Real-ESRGAN GitHub releases only when you ask.
 
 ## Memory safety
 
