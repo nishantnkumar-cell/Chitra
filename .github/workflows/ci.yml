@@ -10,9 +10,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Size budget for the Windows exe, in bytes (20 MiB). HEIC and AVIF add
-  # about 2.3 MB and unwinding for per-file crash isolation about 2.7 MB.
-  MAX_EXE_BYTES: 20971520
+  # Size budget for the Windows exe, in bytes (24 MiB). HEIC and AVIF add
+  # about 2.3 MB, unwinding for per-file crash isolation about 2.7 MB, and
+  # running the AI upscaler on the graphics card (wgpu, DirectX 12) about 2.4 MB.
+  MAX_EXE_BYTES: 25165824
 
 # Read-only token by default; only the release job may write.
 permissions:
