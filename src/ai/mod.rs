@@ -216,7 +216,18 @@ pub fn models_dir() -> Option<PathBuf> {
 
 /// True when the model's files are in place (their contents are checked on load).
 pub fn installed(model: Model) -> bool {
-    models_dir().is_some_and(|d| model.files().iter().all(|f| d.join(f.name).is_file()))
+    missing(model).is_empty()
+}
+
+/// The model's files that are not in place yet.
+pub fn missing(model: Model) -> Vec<&'static ModelFile> {
+    let dir = models_dir();
+    model
+        .files()
+        .iter()
+        .copied()
+        .filter(|f| !dir.as_ref().is_some_and(|d| d.join(f.name).is_file()))
+        .collect()
 }
 
 /// Download a model's files with the system's `curl` (part of Windows 10 and
