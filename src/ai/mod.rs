@@ -18,14 +18,12 @@ mod sha;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use image::{DynamicImage, ImageBuffer, Rgb, Rgba};
 use rayon::prelude::*;
 
-use sha::file_sha256;
-pub use sha::sha256_hex;
+pub use sha::{file_sha256, sha256_hex};
 
 /// One model file: name in the models folder, where to get it, its SHA-256.
 pub struct ModelFile {
@@ -233,16 +231,8 @@ pub fn download(model: Model) -> Result<(), String> {
             continue;
         }
         let part = dir.join(format!("{}.part", f.name));
-        let status = Command::new("curl")
-            .args([
-                "-fsSL",
-                "--proto",
-                "=https",
-                "--tlsv1.2",
-                "--retry",
-                "2",
-                "-o",
-            ])
+        let status = crate::net::curl()
+            .arg("-o")
             .arg(&part)
             .arg(f.url)
             .status()

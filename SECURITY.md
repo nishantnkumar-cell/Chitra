@@ -37,10 +37,14 @@ batch conversion carries on with the other files.
 place, so a failure never leaves a half-written output or damages an input
 that is being overwritten.
 
-**No network access.** Chitra makes no network connections: no telemetry, no
-update checks, no online lookups, and it never starts other programs. CI
-fails if a networking or TLS library is ever added. The Linux Flatpak runs
-without network permission.
+**Minimal network access.** No telemetry and no networking code in Chitra
+itself: CI fails if a networking or TLS library is ever added. Two features
+go online, through the system's `curl`, HTTPS only: a daily update check that
+reads GitHub's public release list (off in Settings), and AI model downloads
+the user starts. Links from the release list are only followed when they
+point at the project's own GitHub releases, and a downloaded installer,
+tarball or model is used only when its SHA-256 matches the published one.
+The Linux Flatpak runs without network permission.
 
 **File-system scope.** Folder scans do not follow symbolic links or
 junctions, so a link loop cannot trap a scan. Deleting a photo moves it to

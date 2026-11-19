@@ -125,7 +125,11 @@ Chitra lists the rest of the folder and you move through it with the keyboard.
 | F1 | Shortcut list |
 | Esc | Leave full screen, close a dialog, or quit |
 
-**Settings** (toolbar button or `Ctrl+,`) holds the slideshow timer, what the
+**Menu** at the end of the toolbar lists every command with its shortcut,
+plus the user guide, problem reports, **Check for updates** and **About
+Chitra** (version, licences, third-party credits, system information).
+
+**Settings** (**Menu > Settings** or `Ctrl+,`) holds the slideshow timer, what the
 mouse wheel does (next/previous photo, zoom, or both), whether right-click
 returns to fit and whether wheel tilt and Back/Forward change photo, sorting
 (name in natural order, date modified, size, type; ascending or descending),
@@ -420,9 +424,12 @@ and tests feed truncated and corrupted files to every decoder.
 
 ## Security
 
-- **Offline only.** Chitra makes no network connections: no telemetry, no
-  update checks, and it never launches other programs. CI fails if a
-  networking or TLS crate is ever added.
+- **Offline by default.** No telemetry. Chitra links no networking code (CI
+  fails if a networking or TLS crate is ever added); the two things that go
+  online use the system's `curl` over HTTPS only: a once-a-day update check
+  that reads GitHub's public release list (turn it off in Settings), and AI
+  model downloads you start. Update packages and models are only used when
+  their SHA-256 matches the published one.
 - **Untrusted files.** Decoders are capped at 2 GiB, so a small file claiming
   huge dimensions is refused. A bug inside a codec fails that one file
   ("cannot decode") instead of closing the app or stopping a batch.

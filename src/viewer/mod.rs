@@ -2,6 +2,7 @@
 //! an info panel, the convert dialog and the passport photo maker, built on
 //! egui/eframe (OpenGL).
 
+mod about;
 mod convert_dialog;
 #[cfg(target_os = "linux")]
 mod dbus;
@@ -28,6 +29,7 @@ use chitra::folder::{self, Entry, SortKey};
 use chitra::format::Format;
 use chitra::video::is_video_path;
 
+use about::About;
 use convert_dialog::ConvertDialog;
 use desktop_theme::DesktopTheme;
 use enhance_dialog::EnhanceDialog;
@@ -166,6 +168,7 @@ struct App {
     enhance: EnhanceDialog,
     passport: PassportDialog,
     printing: Printing,
+    about: About,
     /// The video being played, when the single view shows one.
     video: Option<VideoView>,
 
@@ -228,6 +231,7 @@ impl App {
             enhance: EnhanceDialog::default(),
             passport: PassportDialog::default(),
             printing: Printing::default(),
+            about: About::default(),
             video: None,
             grid_offset: 0.0,
             grid_view_h: 0.0,
@@ -240,6 +244,15 @@ impl App {
             max_texture: 8192,
         };
         app.update_limits(&ctx);
+        if app.about.auto_check(
+            &ctx,
+            app.settings.check_updates,
+            app.settings.last_update_check,
+        ) {
+            app.settings.last_update_check = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+        }
         if let Some(path) = path {
             app.open(path);
         }
@@ -1154,8 +1167,13 @@ impl App {
                 self.convert.open = true;
             }
             let photo = has && self.video.is_none();
+            // The headline feature, outlined in the accent colour.
+            let accent = ui.visuals().selection.stroke.color;
             if ui
-                .add_enabled(photo, egui::Button::new("Enhance"))
+                .add_enabled(
+                    self.video.is_none(),
+                    egui::Button::new("Enhance").stroke(egui::Stroke::new(1.0, accent)),
+                )
                 .on_hover_text(
                     "Upscale 1x to 4x and sharpen, with a side-by-side comparison (Ctrl+E)",
                 )
@@ -1187,26 +1205,80 @@ impl App {
                 self.confirm_delete = self.current_path();
             }
             ui.separator();
-            if ui
-                .selectable_label(self.show_settings, "Settings")
-                .on_hover_text("Slideshow, mouse, sorting and theme (Ctrl+,)")
-                .clicked()
-            {
-                self.show_settings = !self.show_settings;
+            if let Some(v) = self.about.available() {
+                let v = v.to_string();
+                let accent = ui.visuals().selection.bg_fill;
+                if ui
+                    .add(
+                        egui::Button::new(egui::RichText::new("Update").color(Color32::WHITE))
+                            .fill(accent),
+                    )
+                    .on_hover_text(format!("Chitra {v} is available"))
+                    .clicked()
+                {
+                    self.about.updates_open = true;
+                }
             }
-            if ui
-                .button("Full screen")
-                .on_hover_text("Full screen (F / F11)")
-                .clicked()
-            {
+            self.main_menu(ui, ctx);
+        });
+    }
+
+    /// Everything Chitra can do, in one menu at the end of the toolbar.
+    fn main_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let photo = !self.entries.is_empty() && self.video.is_none();
+        let current = self.current_path().filter(|p| !is_video_path(p));
+        let item = |ui: &mut egui::Ui, enabled: bool, text: &str, keys: &str| {
+            let button = egui::Button::new(text).shortcut_text(keys);
+            let clicked = ui.add_enabled(enabled, button).clicked();
+            if clicked {
+                ui.close();
+            }
+            clicked
+        };
+        ui.menu_button("Menu", |ui| {
+            ui.set_min_width(240.0);
+            if item(ui, true, "Open file…", "Ctrl+O") {
+                self.open_dialog();
+            }
+            if item(ui, true, "Open folder…", "Ctrl+Shift+O") {
+                self.open_folder_dialog();
+            }
+            ui.separator();
+            if item(ui, true, "Convert…", "Ctrl+S") {
+                self.convert.open = true;
+            }
+            if item(ui, self.video.is_none(), "Enhance and upscale…", "Ctrl+E") {
+                self.enhance.open_on(current.clone());
+            }
+            if item(ui, photo, "Passport photo…", "Ctrl+Shift+P") {
+                self.passport.open_on(current.clone());
+            }
+            if item(ui, photo && !self.printing.busy(), "Print…", "Ctrl+P") {
+                self.print_current();
+            }
+            ui.separator();
+            if item(ui, true, "Settings", "Ctrl+,") {
+                self.show_settings = true;
+            }
+            if item(ui, true, "Full screen", "F11") {
                 self.toggle_fullscreen(ctx);
             }
-            if ui
-                .button("?")
-                .on_hover_text("Keyboard shortcuts (F1)")
-                .clicked()
-            {
-                self.show_help = !self.show_help;
+            ui.separator();
+            if item(ui, true, "Keyboard shortcuts", "F1") {
+                self.show_help = true;
+            }
+            if item(ui, true, "User guide", "") {
+                let _ = chitra::update::open(chitra::update::USER_GUIDE);
+            }
+            if item(ui, true, "Report a problem", "") {
+                let _ = chitra::update::open(chitra::update::ISSUES);
+            }
+            if item(ui, true, "Check for updates…", "") {
+                self.about.check_now(ctx);
+            }
+            ui.separator();
+            if item(ui, true, "About Chitra", "") {
+                self.about.open = true;
             }
         });
     }
@@ -1949,6 +2021,7 @@ impl App {
         }
 
         self.settings_window(ctx);
+        self.about.show(ctx);
 
         if self.show_help {
             egui::Window::new("Keyboard shortcuts")
@@ -1991,6 +2064,7 @@ impl App {
         }
         let mut open = true;
         let mut resort = false;
+        let mut check_now = false;
         let s = &mut self.settings;
         egui::Window::new("Settings")
             .open(&mut open)
@@ -2047,6 +2121,26 @@ impl App {
                 });
                 ui.add_space(8.0);
 
+                ui.heading("Updates");
+                ui.horizontal(|ui| {
+                    ui.add_enabled(
+                        self.about.can_check(),
+                        egui::Checkbox::new(&mut s.check_updates, "Check for new versions daily"),
+                    );
+                    if ui.button("Check now").clicked() {
+                        check_now = true;
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(format!(
+                        "You have version {}. Only the public release list on GitHub is read.",
+                        chitra::update::VERSION
+                    ))
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(8.0);
+
                 if ui.button("Restore defaults").clicked() {
                     let defaults = Settings::default();
                     resort |= defaults.sort != s.sort || defaults.sort_desc != s.sort_desc;
@@ -2063,6 +2157,9 @@ impl App {
         self.show_settings = open;
         if resort {
             self.resort();
+        }
+        if check_now {
+            self.about.check_now(ctx);
         }
     }
 
@@ -2163,6 +2260,7 @@ const HELP: &[(&str, &str)] = &[
     ("Shift+Left / Right (video)", "Back / forward 5 seconds"),
     ("M (video)", "Mute"),
     ("Ctrl+,", "Settings (slideshow, mouse, sorting, theme)"),
+    ("F1", "Keyboard shortcuts"),
     ("F5", "Refresh folder"),
     ("Esc", "Leave full screen, close, quit"),
 ];
