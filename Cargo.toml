@@ -35,7 +35,6 @@ oxideav-avif = "0.0.15"
 # Matrix products for the optional AI upscaler (matrixmultiply picks AVX/FMA
 # or NEON at run time).
 ndarray = { version = "0.17", default-features = false, features = ["std"] }
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "metal", "wgsl"], optional = true }
 pollster = { version = "0.4.0", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -191,3 +190,22 @@ opt-level = 3
 
 [profile.release.package.rayon-core]
 opt-level = 3
+
+# The AI upscaler's graphics card support: one backend per system keeps it small.
+[target.'cfg(windows)'.dependencies.wgpu]
+version = "30.0.1"
+default-features = false
+features = ["std", "parking_lot", "dx12", "wgsl"]
+optional = true
+
+[target.'cfg(target_os = "macos")'.dependencies.wgpu]
+version = "30.0.1"
+default-features = false
+features = ["std", "parking_lot", "metal", "wgsl"]
+optional = true
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies.wgpu]
+version = "30.0.1"
+default-features = false
+features = ["std", "parking_lot", "vulkan", "wgsl"]
+optional = true
