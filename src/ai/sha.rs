@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-pub(super) fn file_sha256(path: &Path) -> Result<String, String> {
+pub fn file_sha256(path: &Path) -> Result<String, String> {
     let bytes = fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     Ok(sha256_hex(&bytes))
 }

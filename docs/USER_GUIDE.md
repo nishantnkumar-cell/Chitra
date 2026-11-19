@@ -2,7 +2,8 @@
 
 Chitra is a photo viewer and batch converter. It opens JPEG, JPEG XL, PNG, GIF,
 BMP, WebP, AVIF and HEIC/HEIF (iPhone) photos, and converts between them. It
-works offline and never connects to the internet.
+works offline. The only times it goes online are a daily check for a new
+version (which you can turn off) and AI model downloads you ask for.
 
 - [Installing](#installing)
 - [Opening photos](#opening-photos)
@@ -15,6 +16,7 @@ works offline and never connects to the internet.
 - [Converting photos](#converting-photos)
 - [Upscale and sharpen](#upscale-and-sharpen)
 - [Settings](#settings)
+- [Menu, About and updates](#menu-about-and-updates)
 - [Keyboard and mouse reference](#keyboard-and-mouse-reference)
 - [Troubleshooting](#troubleshooting)
 
@@ -232,7 +234,8 @@ converted, `1` some files failed or none were found, `2` invalid options.
 
 ## Upscale and sharpen
 
-**Enhance** in the toolbar (or `Ctrl+E`) enlarges the current photo 1x, 2x, 3x
+**Enhance** in the toolbar (outlined, always available; or `Ctrl+E`, or
+**Menu > Enhance and upscale**) enlarges the current photo 1x, 2x, 3x
 or 4x and sharpens it, for old or small photos such as 960 x 1280 phone
 pictures. The window shows the original and the result side by side; drag
 either one to move both, use the wheel to zoom, and double-click to switch
@@ -311,7 +314,7 @@ Set `CHITRA_AI_CPU=1` to keep the AI off the graphics card.
 
 ## Settings
 
-Click **Settings** or press `Ctrl+,`. Changes apply immediately.
+Choose **Menu > Settings** or press `Ctrl+,`. Changes apply immediately.
 
 | Section | Options |
 |---|---|
@@ -320,14 +323,44 @@ Click **Settings** or press `Ctrl+,`. Changes apply immediately.
 | Sorting | Name (natural order: 2 before 10), date modified, file size or type; ascending or descending |
 | Folders | Show the folder overview; thumbnail size |
 | Theme | Same as Windows/system (default), Light or Dark |
+| Updates | Check for new versions daily (asked at first start); **Check now** |
 
 **Restore defaults** resets everything. Settings are stored in
 `%APPDATA%\Chitra\settings.ini` (Windows) or `~/.config/Chitra/settings.ini`
 (Linux).
 
+## Menu, About and updates
+
+**Menu** at the end of the toolbar lists everything Chitra does, with the
+keyboard shortcuts: open, convert, enhance, passport photo, print, settings,
+full screen, keyboard shortcuts, the user guide, problem reports, update
+checks and **About Chitra**.
+
+**About Chitra** shows the version, the licence (AGPL-3.0-or-later), links to
+the website, user guide and issue tracker, the third-party software Chitra is
+built on with their licences, and system information you can copy into a
+problem report.
+
+**Updates.** The first time Chitra starts it asks whether to check for
+updates; nothing goes online until you answer. If you agree, once a day Chitra asks GitHub for the latest release (only the
+public release list is read; nothing about you or your photos is sent). When a
+newer version is out, an **Update** button appears in the toolbar:
+
+- Windows: **Download and install** fetches the installer, checks its SHA-256
+  against the one GitHub publishes, closes Chitra and runs it. Settings and
+  AI models are kept.
+- Linux tarball: **Download** saves the new tarball to your Downloads folder
+  (checksum checked); extract it and run `install.sh`.
+- Flatpak and macOS: **Open download page**. The Flatpak has no network
+  access, so it cannot check by itself; use **Menu > Check for updates** to
+  open the releases page.
+
+Turn the daily check off in Settings. **Menu > Check for updates** checks at
+any time.
+
 ## Keyboard and mouse reference
 
-Press `F1` or **?** in the app for this list.
+Press `F1` or **Menu > Keyboard shortcuts** in the app for this list.
 
 | Key or mouse | Action |
 |---|---|

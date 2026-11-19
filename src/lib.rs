@@ -13,10 +13,13 @@ pub mod encode;
 pub mod enhance;
 pub mod folder;
 pub mod format;
+pub mod json;
 pub mod metadata;
+pub mod net;
 pub mod passport;
 pub mod print;
 pub mod resize;
+pub mod update;
 pub mod video;
 
 pub use decode::{DecodeOptions, Decoded, decode_file};

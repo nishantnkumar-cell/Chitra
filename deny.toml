@@ -20,7 +20,8 @@ unmaintained = "workspace"
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
-# No C TLS or networking stacks: Chitra never goes online.
+# No TLS or networking stacks in Chitra: the update check and model
+# downloads use the system's curl program.
 deny = [
     { name = "openssl" },
     { name = "openssl-sys" },

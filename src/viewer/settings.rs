@@ -94,6 +94,13 @@ pub struct Settings {
     /// Video sound, 0 to 1.
     pub video_volume: f32,
     pub video_muted: bool,
+    /// Look for a new version on GitHub once a day.
+    pub check_updates: bool,
+    /// The user has answered the first-start question about update checks
+    /// (until then nothing goes online).
+    pub update_asked: bool,
+    /// When that last happened (seconds since 1970).
+    pub last_update_check: u64,
 }
 
 impl Default for Settings {
@@ -110,6 +117,9 @@ impl Default for Settings {
             theme: Theme::System,
             video_volume: 1.0,
             video_muted: false,
+            check_updates: false,
+            update_asked: false,
+            last_update_check: 0,
         }
     }
 }
@@ -202,6 +212,11 @@ impl Settings {
                     }
                 }
                 "video_muted" => s.video_muted = flag,
+                "check_for_updates" => {
+                    s.update_asked = value != "ask";
+                    s.check_updates = flag;
+                }
+                "last_update_check" => s.last_update_check = value.parse().unwrap_or(0),
                 "thumbnail_size" => {
                     if let Ok(n) = value.parse::<f32>() {
                         s.thumb_size = n.clamp(*THUMB_SIZES.start(), *THUMB_SIZES.end());
@@ -226,7 +241,9 @@ impl Settings {
              thumbnail_size = {}\n\
              theme = {}\n\
              video_volume = {}\n\
-             video_muted = {}\n",
+             video_muted = {}\n\
+             check_for_updates = {}\n\
+             last_update_check = {}\n",
             self.slideshow_secs,
             self.wheel.key(),
             self.right_click_fit,
@@ -238,6 +255,12 @@ impl Settings {
             self.theme.key(),
             (self.video_volume * 100.0).round(),
             self.video_muted,
+            match (self.update_asked, self.check_updates) {
+                (false, _) => "ask",
+                (true, true) => "true",
+                (true, false) => "false",
+            },
+            self.last_update_check,
         )
     }
 }
@@ -260,6 +283,9 @@ mod tests {
             theme: Theme::Light,
             video_volume: 0.35,
             video_muted: true,
+            check_updates: true,
+            update_asked: true,
+            last_update_check: 1_795_000_000,
         };
         assert_eq!(Settings::parse(&s.to_text()), s);
     }
@@ -271,5 +297,16 @@ mod tests {
         assert_eq!(s.slideshow_secs, 60);
         assert_eq!(s.wheel, WheelMode::Auto);
         assert_eq!(s.sort, SortKey::Size);
+    }
+
+    #[test]
+    fn update_question_is_asked_once() {
+        let fresh = Settings::default();
+        assert!(!fresh.update_asked && !fresh.check_updates);
+        assert_eq!(Settings::parse(&fresh.to_text()), fresh);
+        // Settings from before the question existed: ask.
+        assert!(!Settings::parse("theme = dark").update_asked);
+        let no = Settings::parse("check_for_updates = false");
+        assert!(no.update_asked && !no.check_updates);
     }
 }
