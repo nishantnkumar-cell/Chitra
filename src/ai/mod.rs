@@ -216,7 +216,18 @@ pub fn models_dir() -> Option<PathBuf> {
 
 /// True when the model's files are in place (their contents are checked on load).
 pub fn installed(model: Model) -> bool {
-    models_dir().is_some_and(|d| model.files().iter().all(|f| d.join(f.name).is_file()))
+    missing(model).is_empty()
+}
+
+/// The model's files that are not in place yet.
+pub fn missing(model: Model) -> Vec<&'static ModelFile> {
+    let dir = models_dir();
+    model
+        .files()
+        .iter()
+        .copied()
+        .filter(|f| !dir.as_ref().is_some_and(|d| d.join(f.name).is_file()))
+        .collect()
 }
 
 /// Download a model's files with the system's `curl` (part of Windows 10 and
@@ -411,7 +422,15 @@ pub fn upscale(image: &DynamicImage, model: Model, noise: f32) -> Result<Dynamic
 
     #[cfg(feature = "gpu")]
     let gpu_out = if std::env::var_os("CHITRA_AI_CPU").is_none() {
-        gpu::upscale(&net, src.as_raw(), w, h, tile_override().map(|t| t.0), pad)
+        // wgpu panics on some driver failures (a lost device, for one);
+        // treat that like any other GPU failure and use the processor.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gpu::upscale(&net, src.as_raw(), w, h, tile_override().map(|t| t.0), pad)
+        }))
+        .unwrap_or_else(|_| {
+            gpu::give_up();
+            None
+        })
     } else {
         None
     };

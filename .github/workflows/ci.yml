@@ -222,7 +222,7 @@ jobs:
       - name: Install packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream flatpak flatpak-builder dbus-user-session libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+          sudo apt-get install -y --no-install-recommends dpkg-dev desktop-file-utils appstream flatpak flatpak-builder dbus-user-session libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
       - name: Check the menu entry and software-centre metadata
         run: |
           desktop-file-validate packaging/linux/*.desktop
@@ -243,6 +243,15 @@ jobs:
           test -s t/out/pattern.avif
           PREFIX="$PWD/t/prefix" t/chitra-*/install.sh --uninstall
           test ! -e t/prefix/bin/chitra
+      - name: Build, install and remove the Debian package
+        run: |
+          sh tools/package_deb.sh
+          dpkg-deb -I dist/chitra_*_amd64.deb
+          sudo apt-get install -y ./dist/chitra_*_amd64.deb
+          /usr/bin/chitra-cli --version
+          /usr/bin/chitra --play-test "$PWD/tests/data/h264-aac.mp4"
+          sudo apt-get remove -y chitra
+          test ! -e /usr/bin/chitra
       - name: Build the Flatpak
         run: |
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
@@ -266,6 +275,7 @@ jobs:
           name: chitra-linux-x86_64
           path: |
             dist/*.tar.gz
+            dist/*.deb
             dist/*.flatpak
 
   # A release tag must match the version in Cargo.toml, so the app reports

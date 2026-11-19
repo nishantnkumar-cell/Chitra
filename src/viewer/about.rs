@@ -496,9 +496,18 @@ impl About {
                     State::Saved(path) => {
                         ui.label(RichText::new("Download complete").size(18.0).strong());
                         ui.label(format!("Saved to {}", path.display()));
-                        ui.label("Extract it and run install.sh inside to replace this version.");
+                        let deb = self.install == Install::Deb;
+                        ui.label(if deb {
+                            "Open it to install with your software centre, or run \
+                             sudo apt install on it."
+                        } else {
+                            "Extract it and run install.sh inside to replace this version."
+                        });
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
+                            if deb && ui.button("Install…").clicked() {
+                                open_link(&path.to_string_lossy());
+                            }
                             if ui.button("Show in folder").clicked() {
                                 if let Some(dir) = path.parent() {
                                     open_link(&dir.to_string_lossy());
@@ -573,6 +582,7 @@ fn system_info() -> Vec<(&'static str, String)> {
     let install = match Install::current() {
         Install::WindowsInstaller => "Windows",
         Install::LinuxTarball => "Linux tarball",
+        Install::Deb => "Debian package",
         Install::Flatpak => "Flatpak",
         Install::Other => "other",
     };

@@ -50,6 +50,8 @@ pub enum Install {
     WindowsInstaller,
     /// Linux tarball: the new tarball is downloaded.
     LinuxTarball,
+    /// Debian/Ubuntu package: the new .deb is downloaded.
+    Deb,
     /// Flatpak: updated by the system's software centre, no network here.
     Flatpak,
     /// macOS or anything else: the release page is opened.
@@ -63,7 +65,13 @@ impl Install {
         } else if cfg!(all(windows, target_arch = "x86_64")) {
             Install::WindowsInstaller
         } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-            Install::LinuxTarball
+            let from_deb = std::env::current_exe().is_ok_and(|p| p.starts_with("/usr/bin"))
+                && Path::new("/var/lib/dpkg/info/chitra.list").exists();
+            if from_deb {
+                Install::Deb
+            } else {
+                Install::LinuxTarball
+            }
         } else {
             Install::Other
         }
@@ -79,6 +87,7 @@ impl Install {
         match self {
             Install::WindowsInstaller => n.starts_with("chitra-setup-") && n.ends_with(".exe"),
             Install::LinuxTarball => n.ends_with("-linux-x86_64.tar.gz"),
+            Install::Deb => n.starts_with("chitra_") && n.ends_with("_amd64.deb"),
             Install::Flatpak | Install::Other => false,
         }
     }
@@ -254,6 +263,8 @@ mod tests {
         {"name": "chitra-0.4.0-linux-x86_64.tar.gz", "size": 15351255,
          "digest": "sha256:EA41289501608F743915E597CD870575E64098B1947949A148EE878C6E50A82F",
          "browser_download_url": "https://github.com/nishantnkumar-cell/Chitra/releases/download/v0.4.0/chitra-0.4.0-linux-x86_64.tar.gz"},
+        {"name": "chitra_0.4.0_amd64.deb", "size": 12447972,
+         "browser_download_url": "https://github.com/nishantnkumar-cell/Chitra/releases/download/v0.4.0/chitra_0.4.0_amd64.deb"},
         {"name": "Chitra-Setup-0.4.0-x64.exe", "size": 9496378, "digest": null,
          "browser_download_url": "https://evil.example/Chitra-Setup-0.4.0-x64.exe"}
       ]}"#;
@@ -281,5 +292,15 @@ mod tests {
             parse_latest(LISTING, Install::Flatpak).unwrap().package,
             None
         );
+    }
+
+    #[test]
+    fn finds_the_debian_package() {
+        let deb = parse_latest(LISTING, Install::Deb)
+            .unwrap()
+            .package
+            .unwrap();
+        assert_eq!(deb.name, "chitra_0.4.0_amd64.deb");
+        assert_eq!(deb.sha256, None);
     }
 }

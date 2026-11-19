@@ -252,20 +252,8 @@ impl EnhanceDialog {
                 Ok(r) => {
                     self.ai_job = None;
                     self.ai_ready = chitra::ai::installed(self.ai_model);
-                    self.ai_msg = match r {
-                        Ok(()) if self.ai_ready => None,
-                        Ok(()) => Some(format!(
-                            "The {} model needs {}; choose the missing file too.",
-                            self.ai_model.label(),
-                            self.ai_model
-                                .files()
-                                .iter()
-                                .map(|f| f.name)
-                                .collect::<Vec<_>>()
-                                .join(" and ")
-                        )),
-                        Err(e) => Some(e),
-                    };
+                    // A partly installed model is shown by ai_setup itself.
+                    self.ai_msg = r.err();
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => self.ai_job = None,
@@ -745,15 +733,37 @@ impl EnhanceDialog {
     /// Getting the AI model: download it, or pick files downloaded by hand.
     fn ai_setup(&mut self, ui: &mut egui::Ui) {
         let m = self.ai_model;
+        let missing = chitra::ai::missing(m);
+        let partial = missing.len() < m.files().len();
+        let bytes: u64 = missing.iter().map(|f| f.bytes).sum();
+        // The Flatpak has no network access, so files come in by hand.
+        let offline = chitra::update::Install::current() == chitra::update::Install::Flatpak;
         ui.add(
-            egui::Label::new(format!(
-                "The {} model is not installed. It is downloaded once (about {} MB, \
-                 Real-ESRGAN by Xintao Wang et al., BSD licence) and checked before use.",
-                m.label(),
-                mb(m.download_bytes())
-            ))
+            egui::Label::new(if partial {
+                format!(
+                    "The {} model is partly installed; about {} MB is still needed.",
+                    m.label(),
+                    mb(bytes)
+                )
+            } else {
+                format!(
+                    "The {} model is not installed. It is downloaded once (about {} MB, \
+                     Real-ESRGAN by Xintao Wang et al., BSD licence) and checked before use.",
+                    m.label(),
+                    mb(bytes)
+                )
+            })
             .wrap(),
         );
+        if offline {
+            ui.add(
+                egui::Label::new(
+                    "This Flatpak cannot reach the internet. Download the file(s) \
+                     below in your browser, then click Choose files… and pick them.",
+                )
+                .wrap(),
+            );
+        }
         if self.ai_job.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -762,7 +772,7 @@ impl EnhanceDialog {
             return;
         }
         ui.horizontal(|ui| {
-            if ui.button("Download").clicked() {
+            if !offline && ui.button("Download").clicked() {
                 let (tx, rx) = mpsc::channel();
                 std::thread::spawn(move || {
                     let _ = tx.send(chitra::ai::download(m));
@@ -796,6 +806,15 @@ impl EnhanceDialog {
         });
         if let Some(m) = &self.ai_msg {
             ui.colored_label(ui.visuals().error_fg_color, m);
+        }
+        // Links for getting the files in a browser, still missing ones only.
+        ui.label(
+            egui::RichText::new(if partial { "Still needed:" } else { "Files:" })
+                .small()
+                .weak(),
+        );
+        for f in &missing {
+            ui.hyperlink_to(egui::RichText::new(f.name).small(), f.url);
         }
     }
 
