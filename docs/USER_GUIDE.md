@@ -323,7 +323,7 @@ Choose **Menu > Settings** or press `Ctrl+,`. Changes apply immediately.
 | Sorting | Name (natural order: 2 before 10), date modified, file size or type; ascending or descending |
 | Folders | Show the folder overview; thumbnail size |
 | Theme | Same as Windows/system (default), Light or Dark |
-| Updates | Check for new versions daily (default on); **Check now** |
+| Updates | Check for new versions daily (asked at first start); **Check now** |
 
 **Restore defaults** resets everything. Settings are stored in
 `%APPDATA%\Chitra\settings.ini` (Windows) or `~/.config/Chitra/settings.ini`
@@ -341,7 +341,8 @@ the website, user guide and issue tracker, the third-party software Chitra is
 built on with their licences, and system information you can copy into a
 problem report.
 
-**Updates.** Once a day Chitra asks GitHub for the latest release (only the
+**Updates.** The first time Chitra starts it asks whether to check for
+updates; nothing goes online until you answer. If you agree, once a day Chitra asks GitHub for the latest release (only the
 public release list is read; nothing about you or your photos is sent). When a
 newer version is out, an **Update** button appears in the toolbar:
 

@@ -244,15 +244,6 @@ impl App {
             max_texture: 8192,
         };
         app.update_limits(&ctx);
-        if app.about.auto_check(
-            &ctx,
-            app.settings.check_updates,
-            app.settings.last_update_check,
-        ) {
-            app.settings.last_update_check = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-        }
         if let Some(path) = path {
             app.open(path);
         }
@@ -2022,6 +2013,7 @@ impl App {
 
         self.settings_window(ctx);
         self.about.show(ctx);
+        self.updates(ctx);
 
         if self.show_help {
             egui::Window::new("Keyboard shortcuts")
@@ -2055,6 +2047,57 @@ impl App {
                     });
                 ctx.request_repaint_after(Duration::from_millis(250));
             }
+        }
+    }
+
+    /// Ask once whether to check for updates, then check daily if allowed.
+    fn updates(&mut self, ctx: &egui::Context) {
+        if !self.about.can_check() {
+            return;
+        }
+        if !self.settings.update_asked {
+            let mut answer = None;
+            egui::Modal::new(egui::Id::unique("update-question")).show(ctx, |ui| {
+                ui.set_width(400.0);
+                ui.heading("Check for updates automatically?");
+                ui.add_space(4.0);
+                ui.label(
+                    "Chitra can look for a new version once a day and offer to \
+                     install it. It reads only the public list of releases on \
+                     GitHub; nothing about you or your photos is sent.",
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(
+                        "You can change this later in Settings, and check by hand \
+                         from Menu > Check for updates.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Check automatically").clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Don't check").clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if let Some(yes) = answer {
+                self.settings.update_asked = true;
+                self.settings.check_updates = yes;
+            }
+            return;
+        }
+        if self.about.auto_check(
+            ctx,
+            self.settings.check_updates,
+            self.settings.last_update_check,
+        ) {
+            self.settings.last_update_check = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
         }
     }
 

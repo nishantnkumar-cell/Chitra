@@ -96,6 +96,8 @@ pub struct About {
     state: State,
     install: Install,
     icon: Option<egui::TextureHandle>,
+    /// The automatic check ran (or was skipped) this session.
+    auto_done: bool,
 }
 
 impl Default for About {
@@ -106,6 +108,7 @@ impl Default for About {
             state: State::Idle,
             install: Install::current(),
             icon: None,
+            auto_done: false,
         }
     }
 }
@@ -168,6 +171,10 @@ impl About {
     /// Check quietly when the setting allows and a day has passed. Returns
     /// true when a check started (the caller saves the time).
     pub fn auto_check(&mut self, ctx: &egui::Context, enabled: bool, last: u64) -> bool {
+        if self.auto_done {
+            return false;
+        }
+        self.auto_done = true;
         let due = now().saturating_sub(last) >= CHECK_EVERY_SECS;
         if !enabled || !due || !self.install.checks() || !matches!(self.state, State::Idle) {
             return false;

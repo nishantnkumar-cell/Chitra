@@ -427,7 +427,8 @@ and tests feed truncated and corrupted files to every decoder.
 - **Offline by default.** No telemetry. Chitra links no networking code (CI
   fails if a networking or TLS crate is ever added); the two things that go
   online use the system's `curl` over HTTPS only: a once-a-day update check
-  that reads GitHub's public release list (turn it off in Settings), and AI
+  that reads GitHub's public release list (only if you agree when first asked;
+  changeable in Settings), and AI
   model downloads you start. Update packages and models are only used when
   their SHA-256 matches the published one.
 - **Untrusted files.** Decoders are capped at 2 GiB, so a small file claiming

@@ -40,7 +40,7 @@ that is being overwritten.
 **Minimal network access.** No telemetry and no networking code in Chitra
 itself: CI fails if a networking or TLS library is ever added. Two features
 go online, through the system's `curl`, HTTPS only: a daily update check that
-reads GitHub's public release list (off in Settings), and AI model downloads
+reads GitHub's public release list (only after the user agrees at first start), and AI model downloads
 the user starts. Links from the release list are only followed when they
 point at the project's own GitHub releases, and a downloaded installer,
 tarball or model is used only when its SHA-256 matches the published one.
