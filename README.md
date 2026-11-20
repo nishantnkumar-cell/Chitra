@@ -218,7 +218,9 @@ videos are left out of batch conversion.
 ## Batch converter
 
 From the viewer: **Convert** (or `Ctrl+S`) converts the current photo or the
-whole folder. From a terminal or script, use `chitra-cli.exe`, the console
+whole folder. **Include sub-folders** (on by default) takes the photos in every
+sub-folder too; with an output folder, the same sub-folders are made there.
+Hidden folders, and an output folder inside the source, are left out. From a terminal or script, use `chitra-cli.exe`, the console
 build of the same commands (cmd and PowerShell wait for it and get its exit
 code; `chitra.exe` is a windowed app, so they return to the prompt at once):
 
@@ -289,7 +291,7 @@ keeps up while you move the sliders.
 
 **Save** writes this photo or every photo in the folder as JPEG, JPEG XL or
 PNG, named `{name}_2x` (and so on) by default, next to the originals or in a
-folder you choose. The Classic method does not invent detail; it makes
+folder you choose. **Include sub-folders** works as in the converter. The Classic method does not invent detail; it makes
 enlargements smooth and crisp, and stays fast and small.
 
 ### AI method (optional)

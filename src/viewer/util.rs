@@ -82,3 +82,41 @@ mod tests {
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
     }
 }
+
+/// Counts the photos in a folder and its sub-folders on a background thread,
+/// so a large tree never stalls the window. Counted again when the folder or
+/// output folder changes, or after `reset`.
+#[derive(Default)]
+pub struct TreeCount {
+    key: Option<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+    result: std::sync::Arc<std::sync::Mutex<Option<usize>>>,
+}
+
+impl TreeCount {
+    pub fn get(
+        &mut self,
+        ctx: &egui::Context,
+        dir: &std::path::Path,
+        out_dir: Option<&std::path::PathBuf>,
+    ) -> Option<usize> {
+        let key = (dir.to_path_buf(), out_dir.cloned());
+        if self.key.as_ref() != Some(&key) {
+            let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+            self.result = slot.clone();
+            let roots = [key.0.clone()];
+            let out = key.1.clone();
+            self.key = Some(key);
+            let ctx = ctx.clone();
+            std::thread::spawn(move || {
+                let n = chitra::convert::count_inputs(&roots, true, out.as_deref());
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(n);
+                ctx.request_repaint();
+            });
+        }
+        *self.result.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn reset(&mut self) {
+        self.key = None;
+    }
+}

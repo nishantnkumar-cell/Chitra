@@ -1961,12 +1961,14 @@ impl App {
             .map(|e| e.path.clone())
             .filter(|p| !is_video_path(p))
             .collect();
-        self.convert.show(ctx, current.as_ref(), &folder);
+        self.convert
+            .show(ctx, current.as_ref(), self.dir.as_deref(), &folder);
         if self.convert.finished {
             self.convert.finished = false;
             self.rescan();
         }
-        self.enhance.show(ctx, current.as_ref(), &folder);
+        self.enhance
+            .show(ctx, current.as_ref(), self.dir.as_deref(), &folder);
         if self.enhance.finished {
             self.enhance.finished = false;
             self.rescan();

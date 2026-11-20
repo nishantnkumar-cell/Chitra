@@ -1,7 +1,7 @@
 //! The "Convert" window: the batch converter with the same engine as
 //! `chitra convert`, running on a background thread.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +12,7 @@ use chitra::encode;
 use chitra::format::Format;
 use chitra::resize::ResizeSpec;
 
-use super::util::human_bytes;
+use super::util::{TreeCount, human_bytes};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
@@ -29,6 +29,9 @@ struct Running {
 pub struct ConvertDialog {
     pub open: bool,
     scope: Scope,
+    /// With "All in folder": take sub-folders too, mirroring them in the output.
+    subfolders: bool,
+    tree: TreeCount,
     format: Format,
     quality: u8,
     lossless: bool,
@@ -50,6 +53,8 @@ impl Default for ConvertDialog {
         ConvertDialog {
             open: false,
             scope: Scope::Current,
+            subfolders: true,
+            tree: TreeCount::default(),
             format: Format::WebP,
             quality: 90,
             lossless: false,
@@ -68,7 +73,13 @@ impl Default for ConvertDialog {
 }
 
 impl ConvertDialog {
-    pub fn show(&mut self, ctx: &egui::Context, current: Option<&PathBuf>, folder: &[PathBuf]) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        current: Option<&PathBuf>,
+        dir: Option<&Path>,
+        folder: &[PathBuf],
+    ) {
         if !self.open {
             return;
         }
@@ -79,7 +90,7 @@ impl ConvertDialog {
             .collapsible(false)
             .resizable(false)
             .default_width(380.0)
-            .show(ctx, |ui| self.contents(ui, current, folder));
+            .show(ctx, |ui| self.contents(ui, current, dir, folder));
         // Closing the window while converting just hides it; work continues.
         self.open = open;
         if self.running.is_some() {
@@ -96,10 +107,18 @@ impl ConvertDialog {
             self.running = None;
             self.last = Some(report);
             self.finished = true;
+            // The tree may hold new files now.
+            self.tree.reset();
         }
     }
 
-    fn contents(&mut self, ui: &mut egui::Ui, current: Option<&PathBuf>, folder: &[PathBuf]) {
+    fn contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        current: Option<&PathBuf>,
+        dir: Option<&Path>,
+        folder: &[PathBuf],
+    ) {
         let busy = self.running.is_some();
         ui.add_enabled_ui(!busy, |ui| {
             egui::Grid::new("convert-grid")
@@ -112,9 +131,24 @@ impl ConvertDialog {
                         ui.radio_value(
                             &mut self.scope,
                             Scope::Folder,
-                            format!("All {} in folder", folder.len()),
+                            if self.subfolders && dir.is_some() {
+                                "All in folder".to_string()
+                            } else {
+                                format!("All {} in folder", folder.len())
+                            },
                         );
                     });
+                    ui.end_row();
+
+                    ui.label("");
+                    ui.add_enabled(
+                        self.scope == Scope::Folder && dir.is_some(),
+                        egui::Checkbox::new(&mut self.subfolders, "Include sub-folders"),
+                    )
+                    .on_hover_text(
+                        "Also convert photos in every sub-folder. With an output folder, \
+                         the same sub-folders are made there.",
+                    );
                     ui.end_row();
 
                     ui.label("Format");
@@ -219,21 +253,32 @@ impl ConvertDialog {
             return;
         }
 
-        let inputs: Vec<PathBuf> = match self.scope {
-            Scope::Current => current.cloned().into_iter().collect(),
-            Scope::Folder => folder.to_vec(),
+        let tree = match (self.scope, dir) {
+            (Scope::Folder, Some(dir)) if self.subfolders => Some(dir),
+            _ => None,
+        };
+        let (inputs, count): (Vec<PathBuf>, Option<usize>) = match (self.scope, tree) {
+            (_, Some(dir)) => (
+                vec![dir.to_path_buf()],
+                self.tree.get(ui.ctx(), dir, self.out_dir.as_ref()),
+            ),
+            (Scope::Current, None) => {
+                let v: Vec<PathBuf> = current.cloned().into_iter().collect();
+                let n = v.len();
+                (v, Some(n))
+            }
+            (Scope::Folder, None) => (folder.to_vec(), Some(folder.len())),
         };
         ui.horizontal(|ui| {
-            let label = format!(
-                "Convert {} file{}",
-                inputs.len(),
-                if inputs.len() == 1 { "" } else { "s" }
-            );
+            let label = match count {
+                Some(n) => format!("Convert {n} file{}", if n == 1 { "" } else { "s" }),
+                None => "Counting files…".to_string(),
+            };
             if ui
-                .add_enabled(!inputs.is_empty(), egui::Button::new(label))
+                .add_enabled(count.unwrap_or(0) > 0, egui::Button::new(label))
                 .clicked()
             {
-                self.start(inputs);
+                self.start(inputs, tree.is_some());
             }
         });
 
@@ -271,7 +316,7 @@ impl ConvertDialog {
         }
     }
 
-    fn start(&mut self, inputs: Vec<PathBuf>) {
+    fn start(&mut self, inputs: Vec<PathBuf>, recursive: bool) {
         let mut opts = ConvertOptions::new(self.format);
         opts.quality = self.quality;
         opts.lossless = self.lossless;
@@ -287,6 +332,7 @@ impl ConvertDialog {
         };
         opts.conflict = self.conflict;
         opts.keep_metadata = self.keep_metadata;
+        opts.recursive = recursive;
 
         let jobs = convert::plan(&inputs, &opts);
         let done = Arc::new(AtomicUsize::new(0));

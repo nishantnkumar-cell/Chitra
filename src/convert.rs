@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use crate::decode::{DecodeOptions, decode_file};
 use crate::encode::{EncodeError, EncodeOptions, JpegRepack, encode, supports_exif};
 use crate::enhance::{self, EnhanceOptions};
-use crate::folder::natural_cmp;
+use crate::folder::{list_subfolders, natural_cmp};
 use crate::format::{Format, is_supported_path};
 use crate::metadata;
 use crate::resize::{ResizeSpec, resize, target_size};
@@ -181,11 +181,14 @@ struct Source {
     rel_dir: PathBuf,
 }
 
-fn gather(roots: &[PathBuf], recursive: bool) -> Vec<Source> {
+fn gather(roots: &[PathBuf], recursive: bool, out_dir: Option<&Path>) -> Vec<Source> {
+    // An output folder inside a source folder is left out, so a second run
+    // does not convert the first run's results again.
+    let skip = out_dir.and_then(|d| fs::canonicalize(d).ok());
     let mut out = Vec::new();
     for root in roots {
         if root.is_dir() {
-            gather_dir(root, root, recursive, &mut out);
+            gather_dir(root, root, recursive, skip.as_deref(), &mut out);
         } else {
             out.push(Source {
                 path: root.clone(),
@@ -196,16 +199,19 @@ fn gather(roots: &[PathBuf], recursive: bool) -> Vec<Source> {
     out
 }
 
-fn gather_dir(root: &Path, dir: &Path, recursive: bool, out: &mut Vec<Source>) {
+fn gather_dir(
+    root: &Path,
+    dir: &Path,
+    recursive: bool,
+    skip: Option<&Path>,
+    out: &mut Vec<Source>,
+) {
     let Ok(read) = fs::read_dir(dir) else { return };
     let mut files = Vec::new();
-    let mut dirs = Vec::new();
     for item in read.flatten() {
         let path = item.path();
         let Ok(kind) = item.file_type() else { continue };
-        if kind.is_dir() {
-            dirs.push(path);
-        } else if kind.is_file() && is_supported_path(&path) {
+        if kind.is_file() && is_supported_path(&path) {
             files.push(path);
         }
     }
@@ -219,11 +225,20 @@ fn gather_dir(root: &Path, dir: &Path, recursive: bool, out: &mut Vec<Source>) {
         rel_dir: rel_dir.clone(),
     }));
     if recursive {
-        dirs.sort_by(|a, b| natural_cmp(a, b));
-        for d in dirs {
-            gather_dir(root, &d, true, out);
+        // Hidden and system folders are skipped, and links to folders are not
+        // followed, so a link back up the tree cannot loop.
+        for d in list_subfolders(dir) {
+            let is_out = skip.is_some_and(|s| fs::canonicalize(&d).is_ok_and(|c| c == s));
+            if !is_out {
+                gather_dir(root, &d, true, skip, out);
+            }
         }
     }
+}
+
+/// How many files `plan` would take from `roots`, without checking outputs.
+pub fn count_inputs(roots: &[PathBuf], recursive: bool, out_dir: Option<&Path>) -> usize {
+    gather(roots, recursive, out_dir).len()
 }
 
 /// Fill in a rename pattern. Unknown tokens are left as written.
@@ -289,7 +304,7 @@ fn key(path: &Path) -> String {
 /// Decide every output path up front so names are deterministic and two inputs
 /// never write the same file.
 pub fn plan(roots: &[PathBuf], opts: &ConvertOptions) -> Vec<Job> {
-    let sources = gather(roots, opts.recursive);
+    let sources = gather(roots, opts.recursive, opts.out_dir.as_deref());
     let mut taken: HashSet<String> = HashSet::new();
     let ext = opts.format.extension();
     let mut jobs = Vec::with_capacity(sources.len());
