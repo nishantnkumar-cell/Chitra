@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chitra::convert::{ConflictPolicy, ConvertOptions, Outcome, plan, run};
+use chitra::convert::{ConflictPolicy, ConvertOptions, Outcome, count_inputs, plan, run};
 use chitra::decode::{DecodeOptions, decode_file};
 use chitra::encode::{EncodeOptions, encode};
 use chitra::format::Format;
@@ -124,6 +124,37 @@ fn recursive_mirrors_folders_and_reports_failures() {
         .filter(|e| e.file_type().unwrap().is_file())
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn recursive_skips_output_and_hidden_folders() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    write_image(&src.join("a.png"), Format::Png, 8, 8);
+    write_image(&src.join("Trip/Day 1/b.png"), Format::Png, 8, 8);
+    write_image(&src.join(".thumbnails/c.png"), Format::Png, 8, 8);
+    // An earlier run's output inside the source folder.
+    write_image(&src.join("converted/old.png"), Format::Png, 8, 8);
+
+    let mut opts = ConvertOptions::new(Format::Png);
+    opts.recursive = true;
+    opts.out_dir = Some(src.join("converted"));
+    assert_eq!(
+        count_inputs(std::slice::from_ref(&src), true, opts.out_dir.as_deref()),
+        2
+    );
+    let jobs = plan(std::slice::from_ref(&src), &opts);
+    let inputs: Vec<_> = jobs.iter().map(|j| j.input.clone()).collect();
+    assert_eq!(
+        inputs,
+        vec![src.join("a.png"), src.join("Trip/Day 1/b.png")]
+    );
+    let report = run(jobs, &opts, |_| {});
+    assert_eq!(report.converted(), 2);
+    assert!(src.join("converted/Trip/Day 1/b.png").exists());
+
+    // Not recursive: only the folder's own photos.
+    assert_eq!(count_inputs(std::slice::from_ref(&src), false, None), 1);
 }
 
 #[test]

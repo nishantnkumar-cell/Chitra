@@ -6,7 +6,7 @@
 //! the sliders stays quick even at 4x; saving runs the same code on the whole
 //! photo through the batch converter.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -20,7 +20,7 @@ use chitra::encode;
 use chitra::enhance::{self, EnhanceOptions};
 use chitra::format::Format;
 
-use super::util::human_bytes;
+use super::util::{TreeCount, human_bytes};
 
 /// Output formats offered here.
 const FORMATS: [Format; 3] = [Format::Jpeg, Format::JpegXl, Format::Png];
@@ -100,6 +100,9 @@ pub struct EnhanceDialog {
     preview_error: Option<String>,
 
     scope: Scope,
+    /// With "All in folder": take sub-folders too, mirroring them in the output.
+    subfolders: bool,
+    tree: TreeCount,
     format: Format,
     quality: u8,
     lossless: bool,
@@ -140,6 +143,8 @@ impl Default for EnhanceDialog {
             pending: None,
             preview_error: None,
             scope: Scope::Current,
+            subfolders: true,
+            tree: TreeCount::default(),
             format: Format::Jpeg,
             quality: 92,
             lossless: false,
@@ -215,7 +220,13 @@ impl EnhanceDialog {
         self.loading = Some((path, rx));
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, current: Option<&PathBuf>, folder: &[PathBuf]) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        current: Option<&PathBuf>,
+        dir: Option<&Path>,
+        folder: &[PathBuf],
+    ) {
         if !self.open {
             return;
         }
@@ -228,7 +239,7 @@ impl EnhanceDialog {
             .collapsible(false)
             .resizable(true)
             .default_size([1100.0, 680.0])
-            .show(ctx, |ui| self.contents(ui, folder));
+            .show(ctx, |ui| self.contents(ui, dir, folder));
         self.open = open;
         if !self.open {
             // Free the photo and the preview textures.
@@ -306,10 +317,12 @@ impl EnhanceDialog {
             self.running = None;
             self.last = Some(report);
             self.finished = true;
+            // The tree may hold new files now.
+            self.tree.reset();
         }
     }
 
-    fn contents(&mut self, ui: &mut egui::Ui, folder: &[PathBuf]) {
+    fn contents(&mut self, ui: &mut egui::Ui, dir: Option<&Path>, folder: &[PathBuf]) {
         ui.horizontal_top(|ui| {
             let avail = ui.available_size();
             let size = Vec2::new((avail.x - SIDE_W - 40.0).max(300.0), avail.y.max(320.0));
@@ -322,7 +335,7 @@ impl EnhanceDialog {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.settings(ui);
                     ui.separator();
-                    self.save_controls(ui, folder);
+                    self.save_controls(ui, dir, folder);
                 });
             });
         });
@@ -820,7 +833,7 @@ impl EnhanceDialog {
 
     // ----- saving -----------------------------------------------------------
 
-    fn save_controls(&mut self, ui: &mut egui::Ui, folder: &[PathBuf]) {
+    fn save_controls(&mut self, ui: &mut egui::Ui, dir: Option<&Path>, folder: &[PathBuf]) {
         ui.heading("Save");
         ui.add_space(4.0);
         let busy = self.running.is_some();
@@ -835,7 +848,19 @@ impl EnhanceDialog {
                         ui.radio_value(
                             &mut self.scope,
                             Scope::Folder,
-                            format!("All {} in folder", folder.len()),
+                            if self.subfolders && dir.is_some() {
+                                "All in folder".to_string()
+                            } else {
+                                format!("All {} in folder", folder.len())
+                            },
+                        );
+                        ui.add_enabled(
+                            self.scope == Scope::Folder && dir.is_some(),
+                            egui::Checkbox::new(&mut self.subfolders, "Include sub-folders"),
+                        )
+                        .on_hover_text(
+                            "Also save photos in every sub-folder. With a Save to folder, \
+                             the same sub-folders are made there.",
                         );
                     });
                     ui.end_row();
@@ -918,23 +943,34 @@ impl EnhanceDialog {
             return;
         }
 
-        let inputs: Vec<PathBuf> = match self.scope {
-            Scope::Current => self.source.iter().map(|s| s.path.clone()).collect(),
-            Scope::Folder => folder.to_vec(),
+        let tree = match (self.scope, dir) {
+            (Scope::Folder, Some(dir)) if self.subfolders => Some(dir),
+            _ => None,
         };
-        let label = format!(
-            "Save {} photo{}",
-            inputs.len(),
-            if inputs.len() == 1 { "" } else { "s" }
-        );
+        let (inputs, count): (Vec<PathBuf>, Option<usize>) = match (self.scope, tree) {
+            (_, Some(dir)) => (
+                vec![dir.to_path_buf()],
+                self.tree.get(ui.ctx(), dir, self.out_dir.as_ref()),
+            ),
+            (Scope::Current, None) => {
+                let v: Vec<PathBuf> = self.source.iter().map(|s| s.path.clone()).collect();
+                let n = v.len();
+                (v, Some(n))
+            }
+            (Scope::Folder, None) => (folder.to_vec(), Some(folder.len())),
+        };
+        let label = match count {
+            Some(n) => format!("Save {n} photo{}", if n == 1 { "" } else { "s" }),
+            None => "Counting photos…".to_string(),
+        };
         if ui
             .add_enabled(
-                !inputs.is_empty() && (!self.ai || self.ai_ready),
+                count.unwrap_or(0) > 0 && (!self.ai || self.ai_ready),
                 egui::Button::new(label),
             )
             .clicked()
         {
-            self.start(inputs);
+            self.start(inputs, tree.is_some());
         }
 
         if let Some(report) = &self.last {
@@ -972,7 +1008,7 @@ impl EnhanceDialog {
         }
     }
 
-    fn start(&mut self, inputs: Vec<PathBuf>) {
+    fn start(&mut self, inputs: Vec<PathBuf>, recursive: bool) {
         let mut opts = ConvertOptions::new(self.format);
         opts.quality = self.quality;
         opts.lossless = self.lossless;
@@ -985,6 +1021,7 @@ impl EnhanceDialog {
         };
         opts.conflict = self.conflict;
         opts.keep_metadata = self.keep_metadata;
+        opts.recursive = recursive;
 
         let jobs = convert::plan(&inputs, &opts);
         let done = Arc::new(AtomicUsize::new(0));
