@@ -626,7 +626,7 @@ impl EnhanceDialog {
             let msg = if self.ai_pending.is_some() {
                 "Making the AI preview…"
             } else if self.ai_ready {
-                "Click Make AI preview to see the result"
+                "Click Make AI preview (next to Reset) to see the result"
             } else {
                 "Get the AI model first (on the right)"
             };
@@ -649,10 +649,9 @@ impl EnhanceDialog {
         }
     }
 
-    /// AI method: the button that makes (or remakes) the preview, and how
-    /// it is going.
+    /// AI method: how the preview is going, over the comparison. The button
+    /// that makes it sits next to Reset in the settings.
     fn ai_bar(&mut self, ui: &mut egui::Ui, full: &Arc<DynamicImage>) {
-        let opts = self.opts();
         ui.horizontal(|ui| {
             if let Some(p) = &self.ai_pending {
                 ui.spinner();
@@ -669,37 +668,59 @@ impl EnhanceDialog {
                     .request_repaint_after(std::time::Duration::from_millis(500));
                 return;
             }
-            let stale = self.ai_view.as_ref().is_some_and(|v| v.opts != opts);
-            let label = match (&self.ai_view, stale) {
-                (None, _) => "Make AI preview",
-                (Some(_), true) => "Update AI preview",
-                (Some(_), false) => "Preview is up to date",
-            };
-            let enabled = self.ai_ready && (self.ai_view.is_none() || stale);
-            let button = egui::Button::new(egui::RichText::new(label).strong());
-            if ui
-                .add_enabled(enabled, button)
-                .on_hover_text(
-                    "Runs the AI on the whole photo with these settings. On the \
-                     processor this can take a minute or more; moving around the \
-                     result afterwards is instant.",
-                )
-                .clicked()
-            {
-                self.start_ai_preview(full, opts);
-            }
             match &self.ai_view {
-                Some(_) if stale => {
-                    ui.weak("Settings changed since this preview.");
+                Some(_) if self.ai_stale() => {
+                    ui.weak("Settings changed since this preview: click Update AI preview.");
                 }
                 Some(v) => {
-                    ui.weak(format!("Made in {:.0} s.", v.seconds));
+                    ui.weak(format!("AI preview made in {:.0} s.", v.seconds));
                 }
                 None => {
-                    ui.weak("Change the settings, then make a preview.");
+                    ui.weak("Change the settings, then click Make AI preview.");
                 }
             }
         });
+    }
+
+    /// The AI preview was made with other settings than the current ones.
+    fn ai_stale(&self) -> bool {
+        let opts = self.opts();
+        self.ai_view.as_ref().is_some_and(|v| v.opts != opts)
+    }
+
+    /// The Make AI preview button, next to Reset.
+    fn ai_button(&mut self, ui: &mut egui::Ui) {
+        if self.ai_pending.is_some() {
+            ui.spinner();
+            ui.label("Making the AI preview…");
+            return;
+        }
+        let stale = self.ai_stale();
+        let label = match (&self.ai_view, stale) {
+            (None, _) => "Make AI preview",
+            (Some(_), true) => "Update AI preview",
+            (Some(_), false) => "Preview is up to date",
+        };
+        let enabled = self.ai_ready && (self.ai_view.is_none() || stale);
+        let button = egui::Button::new(egui::RichText::new(label).strong());
+        if ui
+            .add_enabled(enabled, button)
+            .on_hover_text(
+                "Runs the AI on the whole photo with these settings. On the \
+                 processor this can take a minute or more; moving around the \
+                 result afterwards is instant.",
+            )
+            .on_disabled_hover_text(if self.ai_ready {
+                "The preview already shows these settings."
+            } else {
+                "Get the AI model first."
+            })
+            .clicked()
+            && let Some(full) = self.source.as_ref().map(|s| s.full.clone())
+        {
+            let opts = self.opts();
+            self.start_ai_preview(&full, opts);
+        }
     }
 
     /// Run the AI on the whole photo (or, for a very large result, the part
@@ -954,14 +975,20 @@ impl EnhanceDialog {
                 "Small changes in brightness (grain, JPEG blocks) are sharpened less. \
                  Raise it for noisy or heavily compressed photos.",
             );
-        if ui.small_button("Reset").clicked() {
-            self.amount = if self.ai { 0.0 } else { 80.0 };
-            self.ai_noise = 50.0;
-            self.radius_auto = true;
-            self.radius = enhance::default_radius(self.scale);
-            self.threshold = 3.0;
-            self.denoise = DEFAULT_DENOISE;
-        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button("Reset").clicked() {
+                self.amount = if self.ai { 0.0 } else { 80.0 };
+                self.ai_noise = 50.0;
+                self.radius_auto = true;
+                self.radius = enhance::default_radius(self.scale);
+                self.threshold = 3.0;
+                self.denoise = DEFAULT_DENOISE;
+            }
+            if self.ai && self.source.is_some() {
+                self.ai_button(ui);
+            }
+        });
     }
 
     /// Getting the AI model: download it, or pick files downloaded by hand.
