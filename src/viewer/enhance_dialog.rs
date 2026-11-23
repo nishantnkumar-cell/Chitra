@@ -2,14 +2,17 @@
 //! compare the original and the result side by side, and save this photo or
 //! the whole folder as JPEG, JPEG XL or PNG.
 //!
-//! The comparison only enhances the part of the photo on screen, so moving
-//! the sliders stays quick even at 4x; saving runs the same code on the whole
-//! photo through the batch converter.
+//! With the classic method the comparison only enhances the part of the
+//! photo on screen, so moving the sliders stays quick even at 4x. The AI
+//! method is too slow for that: its preview covers the whole photo and is
+//! made only when asked, and moving around it shows the result already made.
+//! Saving runs the same code on the whole photo through the batch converter.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, Sense, TextureHandle, Vec2};
 use image::DynamicImage;
@@ -30,6 +33,9 @@ const MAX_PREVIEW_SIDE: f32 = 4096.0;
 const MAX_PREVIEW_PIXELS: f32 = 16_000_000.0;
 const SIDE_W: f32 = 290.0;
 const DEFAULT_DENOISE: f32 = 30.0;
+/// Largest AI preview of the whole photo, in output pixels; above that the
+/// preview covers the part in view.
+const AI_PREVIEW_MAX: f64 = 50_000_000.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
@@ -49,11 +55,28 @@ struct Request {
 struct Preview {
     req: Request,
     before: TextureHandle,
-    after: TextureHandle,
+    /// `None` while the AI method has no result yet (the original still shows).
+    after: Option<TextureHandle>,
 }
 
 type PreviewResult = Result<(ColorImage, ColorImage), String>;
 type Loaded = Result<(PathBuf, Arc<DynamicImage>), String>;
+
+/// An AI preview made on request.
+struct AiView {
+    opts: EnhanceOptions,
+    /// The part of the photo it covers (usually all of it).
+    area: Region,
+    out: Arc<DynamicImage>,
+    seconds: f32,
+}
+
+struct AiPending {
+    opts: EnhanceOptions,
+    area: Region,
+    started: Instant,
+    rx: Receiver<Result<DynamicImage, String>>,
+}
 
 struct Source {
     path: PathBuf,
@@ -98,6 +121,9 @@ pub struct EnhanceDialog {
     preview: Option<Preview>,
     pending: Option<(Request, Receiver<PreviewResult>)>,
     preview_error: Option<String>,
+    /// AI method: the last preview, and one being made.
+    ai_view: Option<AiView>,
+    ai_pending: Option<AiPending>,
 
     scope: Scope,
     /// With "All in folder": take sub-folders too, mirroring them in the output.
@@ -142,6 +168,8 @@ impl Default for EnhanceDialog {
             preview: None,
             pending: None,
             preview_error: None,
+            ai_view: None,
+            ai_pending: None,
             scope: Scope::Current,
             subfolders: true,
             tree: TreeCount::default(),
@@ -247,9 +275,12 @@ impl EnhanceDialog {
             self.preview = None;
             self.loading = None;
             self.pending = None;
+            self.ai_view = None;
+            self.ai_pending = None;
         }
         if self.loading.is_some()
             || self.pending.is_some()
+            || self.ai_pending.is_some()
             || self.running.is_some()
             || self.ai_job.is_some()
         {
@@ -277,6 +308,8 @@ impl EnhanceDialog {
                     self.source = Some(Source { path, full });
                     self.preview = None;
                     self.preview_error = None;
+                    self.ai_view = None;
+                    self.ai_pending = None;
                     self.loading = None;
                 }
                 Ok(Err(e)) => {
@@ -296,7 +329,7 @@ impl EnhanceDialog {
                     self.preview = Some(Preview {
                         req: *req,
                         before: ctx.load_texture("enhance-before", before, opts),
-                        after: ctx.load_texture("enhance-after", after, opts),
+                        after: Some(ctx.load_texture("enhance-after", after, opts)),
                     });
                     self.preview_error = None;
                     self.pending = None;
@@ -307,6 +340,27 @@ impl EnhanceDialog {
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => self.pending = None,
+            }
+        }
+        if let Some(p) = &self.ai_pending {
+            match p.rx.try_recv() {
+                Ok(Ok(out)) => {
+                    self.ai_view = Some(AiView {
+                        opts: p.opts,
+                        area: p.area,
+                        out: Arc::new(out),
+                        seconds: p.started.elapsed().as_secs_f32(),
+                    });
+                    self.preview = None;
+                    self.preview_error = None;
+                    self.ai_pending = None;
+                }
+                Ok(Err(e)) => {
+                    self.preview_error = Some(e);
+                    self.ai_pending = None;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => self.ai_pending = None,
             }
         }
         let done = self
@@ -366,6 +420,9 @@ impl EnhanceDialog {
         let (w, h) = (full.width() as f32, full.height() as f32);
         let s = self.scale as f32;
         let ppp = ui.ctx().pixels_per_point();
+        if self.ai {
+            self.ai_bar(ui, &full);
+        }
 
         // Zoom bar.
         let bar_h = ui.spacing().interact_size.y;
@@ -386,7 +443,9 @@ impl EnhanceDialog {
         if h * s > MAX_PREVIEW_SIDE {
             z_min = z_min.max(pane.y / MAX_PREVIEW_SIDE);
         }
-        let cap = max_preview_pixels(self.ai.then_some(self.ai_model));
+        // The AI preview is made once for the whole photo, so the view is
+        // not limited by how much can be enhanced quickly.
+        let cap = max_preview_pixels((self.ai && self.ai_view.is_none()).then_some(self.ai_model));
         if w * s * h * s > cap {
             z_min = z_min.max((pane.x * pane.y / cap).sqrt());
         }
@@ -417,7 +476,7 @@ impl EnhanceDialog {
             }
             ui.weak(format!("{:.0}%", zoom * ppp * 100.0));
             ui.separator();
-            let busy = self.pending.is_some();
+            let busy = self.pending.is_some() && !self.ai;
             if busy {
                 ui.spinner();
             }
@@ -432,9 +491,16 @@ impl EnhanceDialog {
             format!("{}x, no sharpening", self.scale)
         };
         if self.ai {
-            what += &format!(", AI {}", self.ai_model.label());
-            if self.ai_model.has_noise_control() {
-                what += &format!(" noise {:.0}", self.ai_noise);
+            // Describe the preview on screen, which may predate the settings.
+            let o = self.ai_view.as_ref().map_or(self.opts(), |v| v.opts);
+            what = if o.amount > 0.0 {
+                format!("{}x, sharpen {:.0}%", o.scale, o.amount * 100.0)
+            } else {
+                format!("{}x, no sharpening", o.scale)
+            };
+            what += &format!(", AI {}", o.ai_model.label());
+            if o.ai_model.has_noise_control() {
+                what += &format!(" noise {:.0}", o.ai_noise * 100.0);
             }
             let dev = chitra::ai::last_device();
             if !dev.is_empty() {
@@ -524,7 +590,11 @@ impl EnhanceDialog {
         };
 
         let visible = region(self.center, half, w, h);
-        self.request(&full, visible);
+        if self.ai {
+            self.ai_show(ui.ctx(), &full, visible);
+        } else {
+            self.request(&full, visible);
+        }
 
         let bg = ui.visuals().extreme_bg_color;
         for (rect, after) in [(left, false), (right, true)] {
@@ -538,7 +608,12 @@ impl EnhanceDialog {
                     map(rx as f32, ry as f32),
                     map((rx + rw) as f32, (ry + rh) as f32),
                 );
-                let tex = if after { &p.after } else { &p.before };
+                let tex = if after {
+                    p.after.as_ref()
+                } else {
+                    Some(&p.before)
+                };
+                let Some(tex) = tex else { continue };
                 painter.image(
                     tex.id(),
                     dst,
@@ -546,6 +621,22 @@ impl EnhanceDialog {
                     Color32::WHITE,
                 );
             }
+        }
+        if self.ai && self.ai_view.is_none() && self.preview_error.is_none() {
+            let msg = if self.ai_pending.is_some() {
+                "Making the AI preview…"
+            } else if self.ai_ready {
+                "Click Make AI preview to see the result"
+            } else {
+                "Get the AI model first (on the right)"
+            };
+            ui.painter_at(right).text(
+                right.center(),
+                egui::Align2::CENTER_CENTER,
+                msg,
+                egui::FontId::proportional(15.0),
+                ui.visuals().weak_text_color(),
+            );
         }
         if let Some(e) = &self.preview_error {
             ui.painter_at(right).text(
@@ -558,12 +649,147 @@ impl EnhanceDialog {
         }
     }
 
+    /// AI method: the button that makes (or remakes) the preview, and how
+    /// it is going.
+    fn ai_bar(&mut self, ui: &mut egui::Ui, full: &Arc<DynamicImage>) {
+        let opts = self.opts();
+        ui.horizontal(|ui| {
+            if let Some(p) = &self.ai_pending {
+                ui.spinner();
+                let what = if p.area == (0, 0, full.width(), full.height()) {
+                    "the whole photo"
+                } else {
+                    "the part in view"
+                };
+                ui.label(format!(
+                    "Making the AI preview of {what}… {:.0} s",
+                    p.started.elapsed().as_secs_f32()
+                ));
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(500));
+                return;
+            }
+            let stale = self.ai_view.as_ref().is_some_and(|v| v.opts != opts);
+            let label = match (&self.ai_view, stale) {
+                (None, _) => "Make AI preview",
+                (Some(_), true) => "Update AI preview",
+                (Some(_), false) => "Preview is up to date",
+            };
+            let enabled = self.ai_ready && (self.ai_view.is_none() || stale);
+            let button = egui::Button::new(egui::RichText::new(label).strong());
+            if ui
+                .add_enabled(enabled, button)
+                .on_hover_text(
+                    "Runs the AI on the whole photo with these settings. On the \
+                     processor this can take a minute or more; moving around the \
+                     result afterwards is instant.",
+                )
+                .clicked()
+            {
+                self.start_ai_preview(full, opts);
+            }
+            match &self.ai_view {
+                Some(_) if stale => {
+                    ui.weak("Settings changed since this preview.");
+                }
+                Some(v) => {
+                    ui.weak(format!("Made in {:.0} s.", v.seconds));
+                }
+                None => {
+                    ui.weak("Change the settings, then make a preview.");
+                }
+            }
+        });
+    }
+
+    /// Run the AI on the whole photo (or, for a very large result, the part
+    /// in view) in the background.
+    fn start_ai_preview(&mut self, full: &Arc<DynamicImage>, opts: EnhanceOptions) {
+        let (w, h) = (full.width(), full.height());
+        let s = opts.scale as f64;
+        let area = if w as f64 * h as f64 * s * s <= AI_PREVIEW_MAX {
+            (0, 0, w, h)
+        } else {
+            let (fw, fh) = (w as f32, h as f32);
+            let k = self.zoom.unwrap_or(1.0) * opts.scale as f32;
+            // Half the pane in original pixels; the pane is about 500 points.
+            let half = Vec2::splat(400.0 / k.max(1e-3));
+            region(self.center, half, fw, fh)
+        };
+        let (tx, rx) = mpsc::channel();
+        let full = full.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(enhance::enhance_region(&full, &opts, area));
+        });
+        self.preview_error = None;
+        self.ai_pending = Some(AiPending {
+            opts,
+            area,
+            started: Instant::now(),
+            rx,
+        });
+    }
+
+    /// Show the part of the AI preview in view (with room to pan), uploading
+    /// it only when the view leaves what is already on the card.
+    fn ai_show(&mut self, ctx: &egui::Context, full: &Arc<DynamicImage>, visible: Region) {
+        let tex = egui::TextureOptions::LINEAR;
+        let Some(v) = &self.ai_view else {
+            // No AI result yet: still show the original.
+            let shown = self
+                .preview
+                .as_ref()
+                .is_some_and(|p| p.after.is_none() && contains(p.req.region, visible));
+            if !shown {
+                let r = widen(visible, full.width(), full.height(), self.scale);
+                self.preview = Some(Preview {
+                    req: Request {
+                        region: r,
+                        opts: self.opts(),
+                    },
+                    before: ctx.load_texture(
+                        "enhance-before",
+                        rgba(&full.crop_imm(r.0, r.1, r.2, r.3)),
+                        tex,
+                    ),
+                    after: None,
+                });
+            }
+            return;
+        };
+        // Outside the previewed area (a very large photo) only the original shows.
+        let Some(r) = intersect(visible, v.area) else {
+            self.preview = None;
+            return;
+        };
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|p| p.after.is_some() && p.req.opts == v.opts && contains(p.req.region, r))
+        {
+            return;
+        }
+        let s = v.opts.scale;
+        let r = intersect(widen(r, full.width(), full.height(), s), v.area).unwrap_or(r);
+        let a = v.area;
+        let before = rgba(&full.crop_imm(r.0, r.1, r.2, r.3));
+        let after = rgba(
+            &v.out
+                .crop_imm((r.0 - a.0) * s, (r.1 - a.1) * s, r.2 * s, r.3 * s),
+        );
+        self.preview = Some(Preview {
+            req: Request {
+                region: r,
+                opts: v.opts,
+            },
+            before: ctx.load_texture("enhance-before", before, tex),
+            after: Some(ctx.load_texture("enhance-after", after, tex)),
+        });
+    }
+
     /// Start enhancing the visible part (with some room to pan) unless the
     /// current or pending preview already covers it.
     fn request(&mut self, full: &Arc<DynamicImage>, visible: Region) {
-        if self.ai && !self.ai_ready {
-            return;
-        }
         let opts = self.opts();
         let covers = |r: &Request| r.opts == opts && contains(r.region, visible);
         if self.preview.as_ref().is_some_and(|p| covers(&p.req)) {
@@ -574,12 +800,7 @@ impl EnhanceDialog {
             let _ = req;
             return;
         }
-        // Room to pan, except for the slow AI preview.
-        let region = if self.ai {
-            visible
-        } else {
-            widen(visible, full.width(), full.height(), self.scale)
-        };
+        let region = widen(visible, full.width(), full.height(), self.scale);
         let req = Request { region, opts };
         let (tx, rx) = mpsc::channel();
         let full = full.clone();
@@ -1050,6 +1271,14 @@ fn region(center: Pos2, half: Vec2, w: f32, h: f32) -> Region {
     (x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32)
 }
 
+fn intersect(a: Region, b: Region) -> Option<Region> {
+    let x0 = a.0.max(b.0);
+    let y0 = a.1.max(b.1);
+    let x1 = (a.0 + a.2).min(b.0 + b.2);
+    let y1 = (a.1 + a.3).min(b.1 + b.3);
+    (x1 > x0 && y1 > y0).then(|| (x0, y0, x1 - x0, y1 - y0))
+}
+
 fn contains(outer: Region, inner: Region) -> bool {
     outer.0 <= inner.0
         && outer.1 <= inner.1
@@ -1103,6 +1332,11 @@ mod tests {
         assert_eq!(r, (0, 88, 12, 12));
         assert!(contains((0, 0, 100, 100), (10, 10, 5, 5)));
         assert!(!contains((10, 10, 5, 5), (0, 0, 100, 100)));
+        assert_eq!(
+            intersect((0, 0, 10, 10), (5, 5, 10, 10)),
+            Some((5, 5, 5, 5))
+        );
+        assert_eq!(intersect((0, 0, 5, 5), (5, 5, 10, 10)), None);
         assert_eq!(widen((40, 40, 20, 20), 100, 100, 1), (35, 35, 30, 30));
         // Too big to widen at 4x.
         assert_eq!(widen((0, 0, 1000, 1000), 4000, 4000, 4), (0, 0, 1000, 1000));
