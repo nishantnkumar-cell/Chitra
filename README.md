@@ -44,7 +44,8 @@ install for all users. You get:
 - an uninstaller in Settings, then Apps.
 
 The installer is not code-signed yet, so Windows SmartScreen may say it is
-from an unknown publisher: click **More info**, then **Run anyway**.
+from an unknown publisher: click **More info**, then **Run anyway**. The plan
+for signing is in [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md).
 
 CI builds the installer on every push (the `chitra-windows-installer`
 artifact) from `installer/chitra.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php).
