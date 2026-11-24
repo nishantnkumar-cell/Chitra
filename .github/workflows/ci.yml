@@ -68,8 +68,6 @@ jobs:
       # GStreamer with H.264 and AAC decoders, as desktops ship it.
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
-      # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
-      # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
       - run: cargo test
       - run: cargo test --no-default-features --features gpu
       # Plays phone clips through the system player (Media Foundation,
@@ -95,8 +93,6 @@ jobs:
       # GStreamer with H.264 and AAC decoders, as desktops ship it.
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
-      # magetypes is held at 0.9.26 in Cargo.lock: 0.9.27 and later dropped
-      # f32x4::from_float32x4_t, which jxl-encoder-simd 0.3.0 needs on ARM.
       - run: cargo test
       - run: cargo test --no-default-features --features gpu
       # Plays phone clips through the system player (Media Foundation,

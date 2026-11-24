@@ -2,7 +2,7 @@
 name = "chitra"
 version = "0.4.3"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.92"
 description = "Fast, small, memory-safe photo viewer and batch converter (JPEG, JPEG XL, PNG, GIF, BMP, WebP, AVIF, HEIC)"
 license = "AGPL-3.0-or-later"
 
@@ -22,10 +22,10 @@ jxl-encoder = { version = "0.3.1", default-features = false, features = ["std", 
 zune-jpegxl = "0.5.2"
 zune-core = "0.5"
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
-rfd = "0.17.2"
+rfd = "0.18.0"
 kamadak-exif = "0.6.1"
 fast_image_resize = { version = "6.1.0", features = ["image", "rayon"] }
-trash = "5.2.9"
+trash = "5.4.0"
 lexopt = "0.3.2"
 rayon = "1.12.0"
 natord = "1.0.9"
@@ -35,7 +35,7 @@ oxideav-avif = "0.0.15"
 # Matrix products for the optional AI upscaler (matrixmultiply picks AVX/FMA
 # or NEON at run time).
 ndarray = { version = "0.17", default-features = false, features = ["std"] }
-pollster = { version = "0.4.0", optional = true }
+pollster = { version = "1.0.3", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Safe sendmsg, to hand the print portal the PDF as an open file.
@@ -83,8 +83,6 @@ gstreamer-video = { version = "0.25", optional = true }
 [patch.crates-io]
 # Fixes decoding AVIF images with odd widths; see vendor/oxideav-avif/PATCHED.md.
 oxideav-avif = { path = "vendor/oxideav-avif" }
-# Builds with the magetypes version held in Cargo.lock; see vendor/zenjpeg/PATCHED.md.
-zenjpeg = { path = "vendor/zenjpeg" }
 
 [features]
 default = ["lossy-encoders", "video", "gpu"]
