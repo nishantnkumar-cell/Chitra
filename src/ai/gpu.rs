@@ -9,14 +9,14 @@
 //! and write the next ones without copies. Anything that goes wrong (no
 //! adapter, too little memory, a lost device) falls back to the processor.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use wgpu::util::DeviceExt;
 
 use super::compact;
 use super::conv::{Act, Conv};
 use super::rrdb;
-use super::{Ready, crop, place, tiles};
+use super::{AdapterEntry, Compute, Ready, crop, place, tiles};
 
 const SHADER: &str = include_str!("gpu.wgsl");
 /// Bytes per parameter block; uniform offsets must be 256-aligned.
@@ -55,7 +55,21 @@ struct Gpu {
     broken: Mutex<bool>,
 }
 
-static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
+/// The card in use for the current choice (`None` inside: none usable).
+static GPU: Mutex<Option<(Compute, Option<Arc<Gpu>>)>> = Mutex::new(None);
+
+/// Why the graphics card is not (or no longer) used, for the AI window.
+static WHY: Mutex<String> = Mutex::new(String::new());
+
+fn note(msg: impl Into<String>) {
+    if let Ok(mut w) = WHY.lock() {
+        *w = msg.into();
+    }
+}
+
+pub(super) fn why_not() -> String {
+    WHY.lock().map(|w| w.clone()).unwrap_or_default()
+}
 
 /// Weights uploaded for one network, keyed by the network's address.
 static NETS: Mutex<Option<(usize, Arc<GpuNet>)>> = Mutex::new(None);
@@ -66,28 +80,136 @@ pub(super) fn forget() {
     }
 }
 
-fn gpu() -> Option<&'static Gpu> {
-    GPU.get_or_init(|| pollster::block_on(init())).as_ref()
+/// Look at the graphics cards again and start over with the next run.
+pub(super) fn reset() {
+    forget();
+    if let Ok(mut g) = GPU.lock() {
+        *g = None;
+    }
+    LOST.store(false, std::sync::atomic::Ordering::SeqCst);
+    note("");
 }
 
-async fn init() -> Option<Gpu> {
+fn gpu() -> Option<Arc<Gpu>> {
+    let want = super::compute();
+    if want == Compute::Processor {
+        return None;
+    }
+    let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((c, g)) = slot.as_ref()
+        && *c == want
+    {
+        return g.clone();
+    }
+    // A different choice: the old card's weights are of no use.
+    forget();
+    LOST.store(false, std::sync::atomic::Ordering::SeqCst);
+    note("");
+    let g = pollster::block_on(init(&want)).map(Arc::new);
+    *slot = Some((want, g.clone()));
+    g
+}
+
+fn instance() -> wgpu::Instance {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
     desc.backends = wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL;
-    let instance = wgpu::Instance::new(desc);
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-            ..Default::default()
-        })
-        .await
-        .ok()?;
+    wgpu::Instance::new(desc)
+}
+
+fn kind(t: wgpu::DeviceType) -> &'static str {
+    match t {
+        wgpu::DeviceType::DiscreteGpu => "discrete",
+        wgpu::DeviceType::IntegratedGpu => "integrated",
+        wgpu::DeviceType::VirtualGpu => "virtual",
+        wgpu::DeviceType::Cpu => "software",
+        wgpu::DeviceType::Other => "other",
+    }
+}
+
+/// Lower is better: a discrete card, then an integrated one. Software
+/// renderers are slower than the processor path and are never picked.
+fn rank(t: wgpu::DeviceType) -> Option<u8> {
+    match t {
+        wgpu::DeviceType::DiscreteGpu => Some(0),
+        wgpu::DeviceType::IntegratedGpu => Some(1),
+        wgpu::DeviceType::VirtualGpu => Some(2),
+        wgpu::DeviceType::Other => Some(3),
+        wgpu::DeviceType::Cpu => None,
+    }
+}
+
+/// Every adapter the system offers, with the one Automatic would use.
+pub(super) fn adapters() -> (Vec<AdapterEntry>, Option<String>) {
+    let list =
+        pollster::block_on(instance().enumerate_adapters(
+            wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
+        ));
+    let mut out: Vec<AdapterEntry> = Vec::new();
+    let mut best: Option<(u8, String)> = None;
+    for a in &list {
+        let i = a.get_info();
+        if out
+            .iter()
+            .any(|e| e.name == i.name && e.backend == format!("{:?}", i.backend))
+        {
+            continue;
+        }
+        if let Some(r) = rank(i.device_type)
+            && best.as_ref().is_none_or(|(b, _)| r < *b)
+        {
+            best = Some((r, i.name.clone()));
+        }
+        out.push(AdapterEntry {
+            name: i.name,
+            kind: kind(i.device_type).to_string(),
+            backend: format!("{:?}", i.backend),
+        });
+    }
+    (out, best.map(|(_, n)| n))
+}
+
+async fn init(want: &Compute) -> Option<Gpu> {
+    let instance = instance();
+    let all = instance
+        .enumerate_adapters(wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL)
+        .await;
+    let allow_cpu = std::env::var_os("CHITRA_GPU_ALLOW_CPU").is_some();
+    // The chosen card by name (Vulkan before DirectX 12 when it shows up in
+    // both), or the best one by type.
+    let named = match want {
+        Compute::Adapter(n) => all
+            .iter()
+            .filter(|a| a.get_info().name == *n)
+            .min_by_key(|a| match a.get_info().backend {
+                wgpu::Backend::Vulkan => 0,
+                wgpu::Backend::Dx12 => 1,
+                _ => 2,
+            })
+            .cloned(),
+        _ => None,
+    };
+    if named.is_none() && matches!(want, Compute::Adapter(_)) {
+        note("the chosen graphics card was not found; using Automatic");
+    }
+    let adapter = match named {
+        Some(a) => a,
+        None => all
+            .iter()
+            .filter(|a| {
+                let t = a.get_info().device_type;
+                rank(t).is_some() || allow_cpu
+            })
+            .min_by_key(|a| rank(a.get_info().device_type).unwrap_or(9))
+            .cloned()
+            .or_else(|| {
+                note("no graphics card with Vulkan, DirectX 12 or Metal support was found");
+                None
+            })?,
+    };
     let info = adapter.get_info();
     // Software renderers are slower than the CPU path.
-    if info.device_type == wgpu::DeviceType::Cpu
-        && std::env::var_os("CHITRA_GPU_ALLOW_CPU").is_none()
-    {
+    if info.device_type == wgpu::DeviceType::Cpu && !allow_cpu {
+        note("only a software renderer was found");
         return None;
     }
     let limits = adapter.limits();
@@ -98,12 +220,16 @@ async fn init() -> Option<Gpu> {
             ..Default::default()
         })
         .await
+        .map_err(|e| note(format!("the graphics card could not be opened: {e}")))
         .ok()?;
     device.on_uncaptured_error(Arc::new(|e| {
         eprintln!("graphics card error: {e}");
     }));
     device.set_device_lost_callback(|reason, msg| {
         eprintln!("graphics card lost ({reason:?}): {msg}; using the processor");
+        note(format!(
+            "the graphics card was lost ({reason:?}); using the processor"
+        ));
         LOST.store(true, std::sync::atomic::Ordering::SeqCst);
     });
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -570,7 +696,7 @@ pub(super) fn upscale(
     fixed_tile: Option<usize>,
     pad: usize,
 ) -> Option<(Vec<f32>, String)> {
-    let g = gpu()?;
+    let g = &*gpu()?;
     if *g.broken.lock().ok()? || lost() {
         return None;
     }
@@ -640,6 +766,7 @@ fn lost() -> bool {
 /// Stop using the graphics card for the rest of the session (after a
 /// panic inside the graphics driver layer, for instance).
 pub(super) fn give_up() {
+    note("the graphics driver failed; using the processor");
     LOST.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -671,6 +798,10 @@ fn batches(list: &[Op]) -> Vec<std::ops::Range<usize>> {
 }
 
 fn fail(g: &Gpu) {
+    note(format!(
+        "{} failed while working; using the processor",
+        g.name
+    ));
     if let Ok(mut b) = g.broken.lock() {
         *b = true;
     }

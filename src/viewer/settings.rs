@@ -101,6 +101,8 @@ pub struct Settings {
     pub update_asked: bool,
     /// When that last happened (seconds since 1970).
     pub last_update_check: u64,
+    /// Where the AI runs: `auto`, `cpu` or `gpu:NAME` (see `chitra::ai::Compute`).
+    pub ai_device: String,
 }
 
 impl Default for Settings {
@@ -120,6 +122,7 @@ impl Default for Settings {
             check_updates: false,
             update_asked: false,
             last_update_check: 0,
+            ai_device: "auto".into(),
         }
     }
 }
@@ -217,6 +220,7 @@ impl Settings {
                     s.check_updates = flag;
                 }
                 "last_update_check" => s.last_update_check = value.parse().unwrap_or(0),
+                "ai_device" => s.ai_device = value.to_string(),
                 "thumbnail_size" => {
                     if let Ok(n) = value.parse::<f32>() {
                         s.thumb_size = n.clamp(*THUMB_SIZES.start(), *THUMB_SIZES.end());
@@ -243,7 +247,8 @@ impl Settings {
              video_volume = {}\n\
              video_muted = {}\n\
              check_for_updates = {}\n\
-             last_update_check = {}\n",
+             last_update_check = {}\n\
+             ai_device = {}\n",
             self.slideshow_secs,
             self.wheel.key(),
             self.right_click_fit,
@@ -261,6 +266,7 @@ impl Settings {
                 (true, false) => "false",
             },
             self.last_update_check,
+            self.ai_device,
         )
     }
 }
@@ -286,6 +292,7 @@ mod tests {
             check_updates: true,
             update_asked: true,
             last_update_check: 1_795_000_000,
+            ai_device: "gpu:NVIDIA GeForce RTX 4070 Ti".into(),
         };
         assert_eq!(Settings::parse(&s.to_text()), s);
     }

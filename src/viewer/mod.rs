@@ -194,6 +194,7 @@ impl App {
         let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
         let settings = Settings::load();
         ctx.set_theme(settings.theme.preference());
+        chitra::ai::set_compute(chitra::ai::Compute::from_key(&settings.ai_device));
         let mut app = App {
             desktop_theme: DesktopTheme::watch(&ctx),
             headerbar: headerbar::wanted(),
@@ -1969,6 +1970,8 @@ impl App {
         }
         self.enhance
             .show(ctx, current.as_ref(), self.dir.as_deref(), &folder);
+        // The AI window may have changed where the AI runs; keep it.
+        self.settings.ai_device = chitra::ai::compute().key();
         if self.enhance.finished {
             self.enhance.finished = false;
             self.rescan();

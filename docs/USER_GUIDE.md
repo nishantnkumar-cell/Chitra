@@ -316,7 +316,13 @@ chitra-cli convert old\ --to png --ai-model best --scale 2 --rename "{name}_2x_b
 `chitra-cli ai-model list` shows each model and whether it is installed,
 `chitra-cli ai-model download all` gets every model, and
 `chitra-cli ai-model import FILE...` installs files you downloaded yourself.
-Set `CHITRA_AI_CPU=1` to keep the AI off the graphics card.
+In the Enhance window, **Run the AI on** says whether the AI will use a
+graphics card or the processor, and after each preview shows what it really
+used. Leave it on **Automatic** (the fastest card, a discrete one before an
+integrated one) or pick a card yourself, or **Processor only**, if
+previews are slow or Automatic chose the wrong card. **Look again** searches
+for cards again after a driver install. Your choice is remembered.
+Setting `CHITRA_AI_CPU=1` still keeps the AI off the graphics card.
 
 ## Settings
 
