@@ -1975,6 +1975,7 @@ impl App {
             .show(ctx, current.as_ref(), self.dir.as_deref(), &folder);
         // The AI window may have changed where the AI runs; keep it.
         self.settings.ai_device = chitra::ai::compute().key();
+        chitra::thumbcache::set_enabled(self.settings.thumbnail_cache);
         if self.enhance.finished {
             self.enhance.finished = false;
             self.rescan();
@@ -2162,6 +2163,16 @@ impl App {
                     "Show the folder overview for folders with sub-folders",
                 );
                 ui.add(egui::Slider::new(&mut s.thumb_size, THUMB_SIZES).text("thumbnail size"));
+                #[cfg(target_os = "linux")]
+                ui.checkbox(
+                    &mut s.thumbnail_cache,
+                    "Share thumbnails with other programs",
+                )
+                .on_hover_text(
+                    "Keeps thumbnails in ~/.cache/thumbnails, the folder file \
+                             managers use too, so folders open faster. Turn off to \
+                             leave nothing behind.",
+                );
                 ui.add_space(8.0);
 
                 ui.heading("Theme");

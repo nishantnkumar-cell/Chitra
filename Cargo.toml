@@ -15,6 +15,9 @@ name = "chitra-cli"
 path = "src/bin/chitra-cli.rs"
 
 [dependencies]
+moxcms = "0.8"
+md-5 = "0.11"
+png = "0.18"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "avif", "rayon"] }
 jxl = "0.8.0"
 zenwebp = { version = "0.4.4", optional = true }
