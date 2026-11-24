@@ -118,10 +118,11 @@ mod portal {
                 }
                 SIGNAL if msg.member.as_deref() == Some("SettingChanged") => {
                     let mut c = msg.body_cursor();
-                    if c.str() == Some(NAMESPACE) && c.str() == Some(KEY) {
-                        if let Some(v) = c.variant_u32(4) {
-                            report(v);
-                        }
+                    if c.str() == Some(NAMESPACE)
+                        && c.str() == Some(KEY)
+                        && let Some(v) = c.variant_u32(4)
+                    {
+                        report(v);
                     }
                 }
                 _ => {}

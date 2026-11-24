@@ -116,16 +116,14 @@ impl Loader {
         let mut q = self.shared.lock();
         let key = (req.path.clone(), req.kind);
         if q.wanted.contains(&key) {
-            if urgent {
-                if let Some(pos) = q
+            if urgent
+                && let Some(pos) = q
                     .items
                     .iter()
                     .position(|r| r.path == req.path && r.kind == req.kind)
-                {
-                    if let Some(item) = q.items.remove(pos) {
-                        q.items.push_front(item);
-                    }
-                }
+                && let Some(item) = q.items.remove(pos)
+            {
+                q.items.push_front(item);
             }
             return;
         }

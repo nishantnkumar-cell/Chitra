@@ -149,7 +149,7 @@ fn has_brand(bytes: &[u8], brands: &[&[u8]]) -> bool {
     let end = size.clamp(16, bytes.len());
     // Major brand at 8..12, minor version at 12..16, compatible brands after.
     std::iter::once(&bytes[8..12])
-        .chain(bytes[16..end].chunks_exact(4))
+        .chain(bytes[16..end].as_chunks::<4>().0.iter().map(|b| &b[..]))
         .any(|brand| brands.contains(&brand))
 }
 

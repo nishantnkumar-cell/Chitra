@@ -321,7 +321,7 @@ pub struct Writer {
 
 impl Writer {
     pub fn pad(&mut self, align: usize) {
-        while self.buf.len() % align != 0 {
+        while !self.buf.len().is_multiple_of(align) {
             self.buf.push(0);
         }
     }
