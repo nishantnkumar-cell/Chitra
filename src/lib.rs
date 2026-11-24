@@ -13,6 +13,8 @@ pub mod encode;
 pub mod enhance;
 pub mod folder;
 pub mod format;
+#[doc(hidden)]
+pub mod fuzzing;
 pub mod json;
 pub mod metadata;
 pub mod net;

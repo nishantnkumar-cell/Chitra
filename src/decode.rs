@@ -101,6 +101,17 @@ pub fn decode_file(path: &Path, opts: DecodeOptions) -> Result<Decoded, DecodeEr
     decode_bytes(&data, format, opts)
 }
 
+/// [`decode_bytes`] without the panic net: for fuzzing and tests, where a panic
+/// inside a codec is a bug to find, not something to absorb.
+#[doc(hidden)]
+pub fn decode_unisolated(
+    data: &[u8],
+    format: Format,
+    opts: DecodeOptions,
+) -> Result<Decoded, DecodeError> {
+    decode_unchecked(data, format, opts)
+}
+
 pub fn decode_bytes(
     data: &[u8],
     format: Format,
