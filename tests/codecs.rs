@@ -264,10 +264,7 @@ fn jxl_finds_exif_before_and_after_the_image() {
 #[test]
 fn jxl_animation_keeps_every_frame_and_stills_take_the_first() {
     let data = jxl_sample("animated5.jxl");
-    let opts = DecodeOptions {
-        animation: true,
-        ..Default::default()
-    };
+    let opts = DecodeOptions { animation: true };
     let d = decode_bytes(&data, Format::JpegXl, opts).unwrap();
     assert_eq!(d.frames.len(), 5);
     assert!(d.frames.iter().all(|f| f.image.dimensions() == (256, 256)));
@@ -280,10 +277,7 @@ fn jxl_animation_keeps_every_frame_and_stills_take_the_first() {
 fn truncated_jxl_fails_cleanly_at_every_length() {
     for name in ["exif.jxl", "animated5.jxl"] {
         let data = jxl_sample(name);
-        let opts = DecodeOptions {
-            animation: true,
-            ..Default::default()
-        };
+        let opts = DecodeOptions { animation: true };
         // Cuts through the header, the frames and the container boxes: each
         // must return (an error, or an image for a cut that loses nothing
         // needed), never hang or panic.
