@@ -246,7 +246,9 @@ pub(crate) fn image_from_rows(
     for row in data.chunks(stride).take(height) {
         pixels.extend(
             row[..width * 4]
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|p| Color32::from_rgb(p[r], p[g], p[b])),
         );
     }

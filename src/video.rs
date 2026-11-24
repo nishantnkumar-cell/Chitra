@@ -204,12 +204,12 @@ fn parse_moov(moov: &[u8]) -> VideoInfo {
         match handler {
             Some(b"vide") if info.video_codec.is_none() => {
                 info.video_codec = codec;
-                if let Some(tkhd) = child(trak, b"tkhd") {
-                    if let Some((w, h, turns)) = tkhd_geometry(tkhd) {
-                        info.width = w;
-                        info.height = h;
-                        info.quarter_turns = turns;
-                    }
+                if let Some(tkhd) = child(trak, b"tkhd")
+                    && let Some((w, h, turns)) = tkhd_geometry(tkhd)
+                {
+                    info.width = w;
+                    info.height = h;
+                    info.quarter_turns = turns;
                 }
             }
             Some(b"soun") if info.audio_codec.is_none() => info.audio_codec = codec,

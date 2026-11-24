@@ -508,10 +508,10 @@ impl About {
                             if deb && ui.button("Install…").clicked() {
                                 open_link(&path.to_string_lossy());
                             }
-                            if ui.button("Show in folder").clicked() {
-                                if let Some(dir) = path.parent() {
-                                    open_link(&dir.to_string_lossy());
-                                }
+                            if ui.button("Show in folder").clicked()
+                                && let Some(dir) = path.parent()
+                            {
+                                open_link(&dir.to_string_lossy());
                             }
                             if ui.button("Close").clicked() {
                                 action = Some(Action::Close);

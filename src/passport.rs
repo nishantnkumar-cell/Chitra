@@ -418,7 +418,7 @@ pub fn render(
     out.par_chunks_mut(row_len)
         .enumerate()
         .for_each(|(y, row)| {
-            for (x, px) in row.chunks_exact_mut(3).enumerate() {
+            for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                 let (sx, sy) = map.apply(x as f32 + 0.5, y as f32 + 0.5);
                 px.copy_from_slice(&sample(&part, sx - 0.5, sy - 0.5, bg).0);
             }
