@@ -176,7 +176,10 @@ jobs:
           # Location removal, resizing and the AI model list through the exe.
           Step "strip location" { ./chitra-cli.exe convert tests/data/exif.jxl --to jpg --strip-location --out "$d/strip" }
           Step "resize" { ./chitra-cli.exe convert $png --to jpg --resize 50% --out "$d/resize" }
-          Step "ai-model list" { ./chitra-cli.exe ai-model list }
+          # 'list' exits 1 when no model is installed (by design, for scripts), so
+          # accept 0 or 1 and check the table is printed.
+          $models = ./chitra-cli.exe ai-model list
+          if ($LASTEXITCODE -gt 1 -or -not ($models -match 'best-2x')) { $fail += "ai-model list (exit $LASTEXITCODE)" }
           # Updates and model downloads use the system's curl.exe.
           Step "system curl" { & "$env:SystemRoot\System32\curl.exe" --version }
           if ($fail.Count -gt 0) { throw ("failed: " + ($fail -join "; ")) }
