@@ -245,3 +245,88 @@ fn detects_format_from_content_not_name() {
         Some(Format::Png)
     );
 }
+
+// ----- JPEG XL decoder, on the sample files of the jxl crate (BSD-3-Clause) ------
+
+fn jxl_sample(name: &str) -> Vec<u8> {
+    std::fs::read(std::path::Path::new("tests/data").join(name)).unwrap()
+}
+
+#[test]
+fn jxl_finds_exif_before_and_after_the_image() {
+    for name in ["exif.jxl", "exif_trailing.jxl"] {
+        let d = decode_bytes(&jxl_sample(name), Format::JpegXl, DecodeOptions::default()).unwrap();
+        assert_eq!((d.image.width(), d.image.height()), (256, 128), "{name}");
+        assert!(d.exif.is_some(), "{name} should have EXIF");
+    }
+}
+
+#[test]
+fn jxl_animation_keeps_every_frame_and_stills_take_the_first() {
+    let data = jxl_sample("animated5.jxl");
+    let opts = DecodeOptions {
+        animation: true,
+        ..Default::default()
+    };
+    let d = decode_bytes(&data, Format::JpegXl, opts).unwrap();
+    assert_eq!(d.frames.len(), 5);
+    assert!(d.frames.iter().all(|f| f.image.dimensions() == (256, 256)));
+    let still = decode_bytes(&data, Format::JpegXl, DecodeOptions::default()).unwrap();
+    assert!(still.frames.is_empty());
+    assert_eq!((still.image.width(), still.image.height()), (256, 256));
+}
+
+#[test]
+fn truncated_jxl_fails_cleanly_at_every_length() {
+    for name in ["exif.jxl", "animated5.jxl"] {
+        let data = jxl_sample(name);
+        let opts = DecodeOptions {
+            animation: true,
+            ..Default::default()
+        };
+        // Cuts through the header, the frames and the container boxes: each
+        // must return (an error, or an image for a cut that loses nothing
+        // needed), never hang or panic.
+        for len in (0..data.len()).step_by((data.len() / 40).max(1)) {
+            let _ = decode_bytes(&data[..len], Format::JpegXl, opts);
+        }
+        assert!(decode_bytes(&data[..data.len() / 2], Format::JpegXl, opts).is_err());
+    }
+}
+
+#[test]
+fn jxl_dimensions_read_only_the_header() {
+    let dir = std::env::temp_dir().join(format!("chitra-jxl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("a.jxl");
+    std::fs::write(&path, jxl_sample("exif.jxl")).unwrap();
+    assert_eq!(
+        chitra::decode::dimensions(&path).unwrap(),
+        (256, 128, Format::JpegXl)
+    );
+    // A file cut inside the header is an error, not a hang.
+    std::fs::write(&path, &jxl_sample("exif.jxl")[..4]).unwrap();
+    assert!(chitra::decode::dimensions(&path).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn jxl_alpha_and_grayscale_round_trip() {
+    let rgba = DynamicImage::ImageRgba8(image::RgbaImage::from_fn(24, 12, |x, y| {
+        image::Rgba([x as u8 * 9, y as u8 * 20, 77, (x * 10) as u8])
+    }));
+    let gray = DynamicImage::ImageLuma8(image::GrayImage::from_fn(24, 12, |x, y| {
+        image::Luma([(x * 8 + y) as u8])
+    }));
+    for (src, want) in [
+        (rgba, image::ColorType::Rgba8),
+        (gray, image::ColorType::L8),
+    ] {
+        let mut opts = EncodeOptions::new(Format::JpegXl);
+        opts.lossless = true;
+        let bytes = encode_to_vec(&src, &opts);
+        let d = decode_bytes(&bytes, Format::JpegXl, DecodeOptions::default()).unwrap();
+        assert_eq!(d.image.color(), want);
+        assert_eq!(d.image.as_bytes(), src.as_bytes());
+    }
+}
