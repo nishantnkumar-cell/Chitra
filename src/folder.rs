@@ -75,7 +75,14 @@ fn list_files(dir: &Path, videos: bool) -> io::Result<Vec<Entry>> {
         if !(is_supported_path(&path) || videos && is_video_path(&path)) {
             continue;
         }
-        let Ok(meta) = item.metadata() else { continue };
+        // A link to a file counts as that file (cloud-sync and NAS setups use
+        // them); a link to a folder or a broken link does not.
+        let meta = if item.file_type().is_ok_and(|t| t.is_symlink()) {
+            fs::metadata(&path)
+        } else {
+            item.metadata()
+        };
+        let Ok(meta) = meta else { continue };
         if !meta.is_file() {
             continue;
         }
@@ -245,6 +252,26 @@ mod tests {
             names(list_media(dir.path()).unwrap()),
             ["IMG_0002.MOV", "VID_3.mp4", "a.jpg"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_to_photos_are_listed_but_not_links_to_folders_or_broken_ones() {
+        let dir = std::env::temp_dir().join(format!("chitra-links-{}", std::process::id()));
+        let real = dir.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("a.jpg"), b"x").unwrap();
+        std::os::unix::fs::symlink(real.join("a.jpg"), dir.join("link.jpg")).unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("folder.jpg")).unwrap();
+        std::os::unix::fs::symlink(dir.join("missing.jpg"), dir.join("broken.jpg")).unwrap();
+        let mut names: Vec<String> = list_media(&dir)
+            .unwrap()
+            .iter()
+            .map(Entry::file_name)
+            .collect();
+        names.sort();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(names, ["link.jpg"]);
     }
 
     #[test]
