@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ai;
+pub mod color;
 pub mod convert;
 pub mod decode;
 pub mod denoise;
@@ -19,6 +20,7 @@ pub mod net;
 pub mod passport;
 pub mod print;
 pub mod resize;
+pub mod thumbcache;
 pub mod update;
 pub mod video;
 

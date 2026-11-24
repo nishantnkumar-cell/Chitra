@@ -90,6 +90,8 @@ pub struct Settings {
     /// Open folders that have sub-folders in the folder overview.
     pub folder_overview: bool,
     pub thumb_size: f32,
+    /// Keep and reuse thumbnails in the folder file managers share (Linux).
+    pub thumbnail_cache: bool,
     pub theme: Theme,
     /// Video sound, 0 to 1.
     pub video_volume: f32,
@@ -116,6 +118,7 @@ impl Default for Settings {
             sort_desc: false,
             folder_overview: true,
             thumb_size: 160.0,
+            thumbnail_cache: true,
             theme: Theme::System,
             video_volume: 1.0,
             video_muted: false,
@@ -221,6 +224,7 @@ impl Settings {
                 }
                 "last_update_check" => s.last_update_check = value.parse().unwrap_or(0),
                 "ai_device" => s.ai_device = value.to_string(),
+                "thumbnail_cache" => s.thumbnail_cache = flag,
                 "thumbnail_size" => {
                     if let Ok(n) = value.parse::<f32>() {
                         s.thumb_size = n.clamp(*THUMB_SIZES.start(), *THUMB_SIZES.end());
@@ -243,6 +247,7 @@ impl Settings {
              sort_descending = {}\n\
              folder_overview = {}\n\
              thumbnail_size = {}\n\
+             thumbnail_cache = {}\n\
              theme = {}\n\
              video_volume = {}\n\
              video_muted = {}\n\
@@ -257,6 +262,7 @@ impl Settings {
             self.sort_desc,
             self.folder_overview,
             self.thumb_size.round(),
+            self.thumbnail_cache,
             self.theme.key(),
             (self.video_volume * 100.0).round(),
             self.video_muted,
@@ -286,6 +292,7 @@ mod tests {
             sort_desc: true,
             folder_overview: false,
             thumb_size: 200.0,
+            thumbnail_cache: false,
             theme: Theme::Light,
             video_volume: 0.35,
             video_muted: true,

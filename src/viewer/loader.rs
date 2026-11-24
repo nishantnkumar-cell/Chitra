@@ -220,6 +220,27 @@ fn load(
     if chitra::video::is_video_path(&req.path) {
         return video_thumb(req, ctx, shared, start);
     }
+    // A thumbnail the file manager (or an earlier run) already made.
+    if req.kind == Kind::Thumb
+        && let Some(hit) = chitra::thumbcache::lookup(&req.path, req.max_side)
+    {
+        let options = TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+        let tex_size = [hit.image.width() as usize, hit.image.height() as usize];
+        let color = ColorImage::from_rgba_unmultiplied(tex_size, hit.image.as_raw());
+        return Some(Ok(Arc::new(LoadedImage {
+            frames: vec![(
+                ctx.load_texture(req.path.to_string_lossy().into_owned(), color, options),
+                Duration::ZERO,
+            )],
+            tex_size,
+            full_size: hit.full_size,
+            format: chitra::format::Format::from_path(&req.path),
+            color: String::new(),
+            decode_time: start.elapsed(),
+            exif: Vec::new(),
+            has_icc: false,
+        })));
+    }
     let animation = req.kind == Kind::Display;
     let decoded = match decode_file(&req.path, DecodeOptions { animation }) {
         Ok(d) => d,
@@ -232,9 +253,22 @@ fn load(
     let full_size = [decoded.image.width(), decoded.image.height()];
     let color = format!("{:?}", decoded.image.color());
     let has_icc = decoded.icc.is_some();
+    let icc = decoded.icc;
     let format = decoded.format;
     let exif_block = decoded.exif;
-    let max = req.max_side.max(16);
+    // Thumbnails are made at the shared cache's size so they can be kept.
+    let class_px = (req.kind == Kind::Thumb && chitra::thumbcache::enabled())
+        .then(|| chitra::thumbcache::class(req.max_side))
+        .flatten()
+        .map(|(_, px)| px);
+    let max = class_px.unwrap_or(req.max_side).max(16);
+    // Wide-gamut photos are converted to sRGB on the screen-sized copy.
+    let to_screen_colours = |mut img: image::RgbaImage| -> image::RgbaImage {
+        if let Some(icc) = &icc {
+            chitra::color::to_srgb_in_place(&mut img, icc);
+        }
+        img
+    };
     let shrink = |img: DynamicImage| -> DynamicImage {
         if img.width() <= max && img.height() <= max {
             img
@@ -253,7 +287,7 @@ fn load(
     // The decoded pixels are moved, not copied: a 24 MP photo is ~96 MB.
     if animated {
         for (i, frame) in decoded.frames.into_iter().enumerate() {
-            let img = shrink(DynamicImage::ImageRgba8(frame.image)).into_rgba8();
+            let img = to_screen_colours(shrink(DynamicImage::ImageRgba8(frame.image)).into_rgba8());
             tex_size = [img.width() as usize, img.height() as usize];
             let color = ColorImage::from_rgba_unmultiplied(tex_size, img.as_raw());
             frames.push((
@@ -262,7 +296,10 @@ fn load(
             ));
         }
     } else {
-        let img = shrink(decoded.image).into_rgba8();
+        let img = to_screen_colours(shrink(decoded.image).into_rgba8());
+        if class_px.is_some() {
+            chitra::thumbcache::store(&req.path, req.max_side, &img, (full_size[0], full_size[1]));
+        }
         tex_size = [img.width() as usize, img.height() as usize];
         let color = ColorImage::from_rgba_unmultiplied(tex_size, img.as_raw());
         frames.push((

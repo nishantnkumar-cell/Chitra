@@ -268,8 +268,12 @@ fn decode_avif(data: &[u8]) -> Result<Decoded, DecodeError> {
         format: Format::Avif,
         image,
         frames: Vec::new(),
-        exif: None,
-        icc: None,
+        exif: avif
+            .metadata
+            .exif
+            .clone()
+            .and_then(metadata::normalize_exif),
+        icc: avif.metadata.icc.clone(),
     })
 }
 
