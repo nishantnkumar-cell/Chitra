@@ -214,7 +214,9 @@ fn gather_dir(
     for item in read.flatten() {
         let path = item.path();
         let Ok(kind) = item.file_type() else { continue };
-        if kind.is_file() && is_supported_path(&path) {
+        let is_file =
+            kind.is_file() || (kind.is_symlink() && fs::metadata(&path).is_ok_and(|m| m.is_file()));
+        if is_file && is_supported_path(&path) {
             files.push(path);
         }
     }
@@ -272,7 +274,13 @@ pub fn render_name(pattern: &str, input: &Path, n: usize, format: Format) -> Str
             "parent" => out.push_str(&parent),
             "ext" => out.push_str(format.extension()),
             "n" => {
-                let width = spec.trim_start_matches('0').parse::<usize>().unwrap_or(0);
+                // A padding width past 20 digits means nothing and could ask for
+                // gigabytes of zeros.
+                let width = spec
+                    .trim_start_matches('0')
+                    .parse::<usize>()
+                    .unwrap_or(0)
+                    .min(20);
                 out.push_str(&format!("{n:0width$}"));
             }
             _ => {
@@ -296,7 +304,21 @@ pub fn render_name(pattern: &str, input: &Path, n: usize, format: Format) -> Str
         })
         .collect();
     let cleaned = cleaned.trim().trim_matches('.').to_string();
-    if cleaned.is_empty() { stem } else { cleaned }
+    if cleaned.is_empty() {
+        return stem;
+    }
+    // Windows reserves these names (with any extension) for devices.
+    let base = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4
+            && (base.starts_with("COM") || base.starts_with("LPT"))
+            && base.as_bytes()[3].is_ascii_digit()
+            && base.as_bytes()[3] != b'0');
+    if reserved {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    }
 }
 
 /// Case-insensitive key so "A.webp" and "a.webp" collide, as they do on Windows and macOS.
@@ -568,6 +590,21 @@ mod tests {
             "_evil_IMG_0042"
         );
         assert_eq!(render_name("", p, 1, Format::Png), "IMG_0042");
+    }
+
+    #[test]
+    fn rename_pattern_limits() {
+        let p = Path::new("/tmp/photo.jpg");
+        // A huge padding width is clamped, not allocated.
+        let n = render_name("{n:99999999999999}", p, 7, Format::Png);
+        assert_eq!(n.len(), 20);
+        assert!(n.ends_with('7'));
+        // Device names are not used as they are.
+        assert_eq!(render_name("con", p, 1, Format::Png), "_con");
+        assert_eq!(render_name("NUL.x", p, 1, Format::Png), "_NUL.x");
+        assert_eq!(render_name("com1", p, 1, Format::Png), "_com1");
+        assert_eq!(render_name("com0", p, 1, Format::Png), "com0");
+        assert_eq!(render_name("console", p, 1, Format::Png), "console");
     }
 
     #[test]

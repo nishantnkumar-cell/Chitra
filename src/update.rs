@@ -38,7 +38,8 @@ pub struct Package {
     pub name: String,
     pub url: String,
     pub size: u64,
-    /// Lower-case hex SHA-256, when GitHub gives one.
+    /// Lower-case hex SHA-256 published with the release; always set, because a
+    /// package without one is not offered.
     pub sha256: Option<String>,
 }
 
@@ -149,17 +150,19 @@ pub fn parse_latest(text: &str, install: Install) -> Result<Release, String> {
             if !url.starts_with(&format!("{OWN_PREFIX}releases/download/")) {
                 return None;
             }
+            // A download without a published checksum is not offered: the
+            // person is sent to the release page instead.
             let sha256 = a
                 .get("digest")
                 .and_then(Value::as_str)
                 .and_then(|d| d.strip_prefix("sha256:"))
                 .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
-                .map(str::to_ascii_lowercase);
+                .map(str::to_ascii_lowercase)?;
             Some(Package {
                 name: name.to_string(),
                 url: url.to_string(),
                 size: a.get("size").and_then(Value::as_f64).unwrap_or(0.0) as u64,
-                sha256,
+                sha256: Some(sha256),
             })
         });
     Ok(Release {
@@ -207,17 +210,18 @@ pub fn part_path(pkg: &Package, dir: &Path) -> PathBuf {
 }
 
 pub fn download(pkg: &Package, dir: &Path) -> Result<PathBuf, String> {
+    let Some(want) = &pkg.sha256 else {
+        return Err("no checksum is published for this download; use the release page".into());
+    };
     let dest = dir.join(&pkg.name);
     let part = part_path(pkg, dir);
     crate::net::download(&pkg.url, &part).inspect_err(|_| {
         let _ = fs::remove_file(&part);
     })?;
-    if let Some(want) = &pkg.sha256 {
-        let got = crate::ai::file_sha256(&part)?;
-        if &got != want {
-            let _ = fs::remove_file(&part);
-            return Err("the download did not match its published checksum".into());
-        }
+    let got = crate::ai::file_sha256(&part)?;
+    if &got != want {
+        let _ = fs::remove_file(&part);
+        return Err("the download did not match its published checksum".into());
     }
     fs::rename(&part, &dest).map_err(|e| format!("cannot save {}: {e}", dest.display()))?;
     Ok(dest)
@@ -264,6 +268,7 @@ mod tests {
          "digest": "sha256:EA41289501608F743915E597CD870575E64098B1947949A148EE878C6E50A82F",
          "browser_download_url": "https://github.com/nishantnkumar-cell/Chitra/releases/download/v0.4.0/chitra-0.4.0-linux-x86_64.tar.gz"},
         {"name": "chitra_0.4.0_amd64.deb", "size": 12447972,
+         "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
          "browser_download_url": "https://github.com/nishantnkumar-cell/Chitra/releases/download/v0.4.0/chitra_0.4.0_amd64.deb"},
         {"name": "Chitra-Setup-0.4.0-x64.exe", "size": 9496378, "digest": null,
          "browser_download_url": "https://evil.example/Chitra-Setup-0.4.0-x64.exe"}
@@ -301,6 +306,22 @@ mod tests {
             .package
             .unwrap();
         assert_eq!(deb.name, "chitra_0.4.0_amd64.deb");
-        assert_eq!(deb.sha256, None);
+        assert_eq!(deb.sha256.as_deref().map(str::len), Some(64));
+    }
+
+    #[test]
+    fn a_package_without_a_checksum_is_not_offered() {
+        // The flatpak asset in LISTING has no digest at all.
+        let listing = LISTING.replace("sha256:", "md5:");
+        for install in [Install::LinuxTarball, Install::Deb] {
+            assert_eq!(parse_latest(&listing, install).unwrap().package, None);
+        }
+        let pkg = Package {
+            name: "x.deb".into(),
+            url: format!("{OWN_PREFIX}releases/download/v1/x.deb"),
+            size: 1,
+            sha256: None,
+        };
+        assert!(download(&pkg, &std::env::temp_dir()).is_err());
     }
 }

@@ -89,10 +89,16 @@ impl<'a> Weights<'a> {
             ));
         }
         let n: usize = shape.iter().product();
+        // The offset comes from the file: no arithmetic on it may wrap.
+        let range = t
+            .offset
+            .checked_mul(4)
+            .zip(t.offset.checked_add(n).and_then(|e| e.checked_mul(4)));
         let data = self
             .storages
             .get(&t.key)
-            .and_then(|d| d.get(t.offset * 4..(t.offset + n) * 4))
+            .zip(range)
+            .and_then(|(d, (a, b))| d.get(a..b))
             .ok_or_else(|| format!("{}: data of {name} missing", self.file))?;
         Ok(data
             .as_chunks::<4>()
