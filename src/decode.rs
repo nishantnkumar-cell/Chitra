@@ -338,8 +338,8 @@ fn truncated() -> DecodeError {
 
 fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> {
     use jxl::api::{
-        Endianness, JxlAuxBoxType, JxlBitDepth, JxlColorType, JxlDataFormat, JxlDecoder,
-        JxlDecoderOptions, JxlPixelFormat, ProcessingResult, states,
+        Endianness, Event, ExtraChannel, JxlAuxBoxType, JxlBitDepth, JxlColorType, JxlDataFormat,
+        JxlDecoder, JxlDecoderOptions, JxlPixelFormat,
     };
 
     let mut input: &[u8] = data;
@@ -349,26 +349,30 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
     // Refuse images over ~1 gigasample so a hostile file cannot exhaust memory.
     options.sample_limit = Some(1 << 30);
 
-    let mut decoder: JxlDecoder<states::WithImageInfo> =
-        match JxlDecoder::<states::Initialized>::new(options)
-            .process(&mut input, Some(&mut runner))
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => result,
-            ProcessingResult::NeedsMoreInput { .. } => return Err(truncated()),
-        };
+    let mut decoder = JxlDecoder::new(options);
+    // Read the headers: basic info and the color profiles.
+    loop {
+        if jxl_event(&mut decoder, &mut input, &mut runner, None)? == Event::BasicInfo {
+            break;
+        }
+    }
 
-    let info = decoder.basic_info().clone();
+    let info = decoder
+        .basic_info()
+        .ok_or_else(|| DecodeError::Invalid("JPEG XL header is incomplete".into()))?
+        .clone();
     let (w, h) = info.size;
     let (w32, h32) = (
         u32::try_from(w).map_err(|_| DecodeError::Invalid("image too large".into()))?,
         u32::try_from(h).map_err(|_| DecodeError::Invalid("image too large".into()))?,
     );
-    let grayscale = decoder.current_pixel_format().color_type.is_grayscale();
+    let grayscale = decoder
+        .current_pixel_format()
+        .is_some_and(|f| f.color_type.is_grayscale());
     let alpha = info
         .extra_channels
         .iter()
-        .any(|c| c.ec_type == jxl::headers::extra_channels::ExtraChannel::Alpha);
+        .any(|c| c.ec_type == ExtraChannel::Alpha);
     let animated = opts.animation && info.animation.is_some();
 
     // Pick the output layout: RGBA8 for animations, otherwise keep bit depth.
@@ -417,12 +421,12 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
     // gain a synthesized ICC block when converted.
     let icc = {
         use jxl::api::{JxlColorEncoding, JxlColorProfile};
-        let profile = decoder.output_color_profile();
         let srgb = |gray| JxlColorProfile::Simple(JxlColorEncoding::srgb(gray));
-        if *profile == srgb(true) || *profile == srgb(false) {
-            None
-        } else {
-            profile.try_as_icc().map(|p| p.into_owned())
+        match decoder.output_color_profile() {
+            Some(profile) if *profile != srgb(true) && *profile != srgb(false) => {
+                profile.try_as_icc().map(|p| p.into_owned())
+            }
+            _ => None,
         }
     };
 
@@ -442,37 +446,47 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
 
     let mut frames: Vec<Frame> = Vec::new();
     let mut still: Option<DynamicImage> = None;
-    let mut exif = None;
-    loop {
-        let frame_decoder = match decoder
-            .process(&mut input, Some(&mut runner))
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => result,
-            ProcessingResult::NeedsMoreInput { .. } => return Err(truncated()),
-        };
-        let duration_ms = frame_decoder.frame_header().duration.unwrap_or(0.0);
+    let mut more_frames = true;
+    while more_frames {
+        // Up to the next frame's header (or the end of the file).
+        loop {
+            match jxl_event(&mut decoder, &mut input, &mut runner, None)? {
+                Event::FrameHeader => break,
+                Event::Complete => {
+                    more_frames = false;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if !more_frames {
+            break;
+        }
+        let duration_ms = decoder
+            .frame_header()
+            .and_then(|f| f.duration)
+            .unwrap_or(0.0);
 
-        let image = match depth {
+        let (image, more) = match depth {
             Out::U8 => {
                 let mut buf = vec![0u8; samples];
-                decoder = decode_jxl_frame(frame_decoder, &mut input, &mut runner, &mut buf, h)?;
-                buffer_to_dynamic(w32, h32, channels, buf)?
+                let more = decode_jxl_frame(&mut decoder, &mut input, &mut runner, &mut buf, h)?;
+                (buffer_to_dynamic(w32, h32, channels, buf)?, more)
             }
             Out::U16 => {
                 let mut raw = vec![0u8; samples * 2];
-                decoder = decode_jxl_frame(frame_decoder, &mut input, &mut runner, &mut raw, h)?;
+                let more = decode_jxl_frame(&mut decoder, &mut input, &mut runner, &mut raw, h)?;
                 let buf: Vec<u16> = raw
                     .as_chunks::<2>()
                     .0
                     .iter()
                     .map(|c| u16::from_ne_bytes([c[0], c[1]]))
                     .collect();
-                buffer16_to_dynamic(w32, h32, channels, buf)?
+                (buffer16_to_dynamic(w32, h32, channels, buf)?, more)
             }
             Out::F32 => {
                 let mut raw = vec![0u8; samples * 4];
-                decoder = decode_jxl_frame(frame_decoder, &mut input, &mut runner, &mut raw, h)?;
+                let more = decode_jxl_frame(&mut decoder, &mut input, &mut runner, &mut raw, h)?;
                 let buf: Vec<f32> = raw
                     .as_chunks::<4>()
                     .0
@@ -481,25 +495,34 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
                     .collect();
                 let img = image::Rgba32FImage::from_raw(w32, h32, buf)
                     .ok_or_else(|| DecodeError::Invalid("unexpected JPEG XL buffer size".into()))?;
-                DynamicImage::ImageRgba32F(img)
+                (DynamicImage::ImageRgba32F(img), more)
             }
         };
-        if exif.is_none() {
-            exif = jxl_exif(decoder.aux_boxes(JxlAuxBoxType::EXIF));
-        }
+        more_frames = more;
 
         if animated {
             frames.push(Frame {
                 image: image.into_rgba8(),
                 delay: normalize_delay(duration_ms.round().max(0.0) as u32),
             });
-            if !decoder.has_more_frames() || frames.len() > MAX_FRAMES {
+            if !more_frames || frames.len() > MAX_FRAMES {
                 break;
             }
         } else {
             still = Some(image);
             break;
         }
+    }
+    // EXIF may sit after the image in the container: tell the decoder the
+    // input is all here and read on to the end, unless it is already found.
+    let mut exif = jxl_exif(decoder.aux_boxes(JxlAuxBoxType::EXIF));
+    if exif.is_none() && !more_frames {
+        decoder.close_input();
+        while !matches!(
+            jxl_event(&mut decoder, &mut input, &mut runner, None),
+            Ok(Event::Complete) | Err(_)
+        ) {}
+        exif = jxl_exif(decoder.aux_boxes(JxlAuxBoxType::EXIF));
     }
     if frames.len() > MAX_FRAMES {
         frames.truncate(1);
@@ -526,29 +549,56 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
     })
 }
 
+/// One step of the decoder. It stops at the next event; when it needs input
+/// that is not there (the whole file is in `input`), the file is truncated.
+fn jxl_event(
+    decoder: &mut jxl::api::JxlDecoder,
+    input: &mut &[u8],
+    runner: &mut RayonRunner,
+    mut buffers: Option<&mut [jxl::api::JxlOutputBuffer]>,
+) -> Result<jxl::api::Event, DecodeError> {
+    use jxl::api::Event;
+    let mut left = input.len();
+    loop {
+        match decoder
+            .process(input, buffers.as_deref_mut(), Some(&mut *runner))
+            .map_err(jxl_err)?
+        {
+            // It asked for more and took nothing: nothing more will come.
+            Event::NeedMoreInput { .. } if input.is_empty() || input.len() == left => {
+                return Err(truncated());
+            }
+            Event::NeedMoreInput { .. } => left = input.len(),
+            event => return Ok(event),
+        }
+    }
+}
+
+/// Decodes the current frame (after its header) into `buf`; whether more
+/// frames follow.
 fn decode_jxl_frame(
-    mut decoder: jxl::api::JxlDecoder<jxl::api::states::WithFrameInfo>,
+    decoder: &mut jxl::api::JxlDecoder,
     input: &mut &[u8],
     runner: &mut RayonRunner,
     buf: &mut [u8],
     height: usize,
-) -> Result<jxl::api::JxlDecoder<jxl::api::states::WithImageInfo>, DecodeError> {
-    use jxl::api::{JxlOutputBuffer, ProcessingResult};
+) -> Result<bool, DecodeError> {
+    use jxl::api::{Event, JxlOutputBuffer};
 
     let bytes_per_row = buf.len() / height.max(1);
     let mut output = JxlOutputBuffer::new(buf, height, bytes_per_row);
     loop {
-        match decoder
-            .process(input, std::slice::from_mut(&mut output), Some(&mut *runner))
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => return Ok(result),
-            ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                if input.is_empty() {
-                    return Err(truncated());
-                }
-                decoder = fallback;
+        match jxl_event(
+            decoder,
+            input,
+            runner,
+            Some(std::slice::from_mut(&mut output)),
+        )? {
+            Event::FrameComplete { has_more_frames } => return Ok(has_more_frames),
+            Event::Complete => {
+                return Err(DecodeError::Invalid("JPEG XL frame ended early".into()));
             }
+            _ => {}
         }
     }
 }
@@ -597,16 +647,15 @@ pub fn dimensions(path: &Path) -> Result<(u32, u32, Format), DecodeError> {
     let data = std::fs::read(path)?;
     let format = detect_format(&data, Some(path)).ok_or(DecodeError::UnknownFormat)?;
     if format == Format::JpegXl {
-        use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
+        use jxl::api::{Event, JxlDecoder, JxlDecoderOptions};
         let mut input: &[u8] = &data;
-        let decoder = match JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default())
-            .process(&mut input, None)
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => result,
-            ProcessingResult::NeedsMoreInput { .. } => return Err(truncated()),
-        };
-        let (w, h) = decoder.basic_info().size;
+        let mut runner = RayonRunner;
+        let mut decoder = JxlDecoder::new(JxlDecoderOptions::default());
+        while jxl_event(&mut decoder, &mut input, &mut runner, None)? != Event::BasicInfo {}
+        let (w, h) = decoder
+            .basic_info()
+            .ok_or_else(|| DecodeError::Invalid("JPEG XL header is incomplete".into()))?
+            .size;
         return Ok((w as u32, h as u32, format));
     }
     let reader = ImageReader::with_format(Cursor::new(&data), image_format(format));
