@@ -1180,7 +1180,20 @@ impl EnhanceDialog {
                 .weak(),
         );
         for f in &missing {
-            ui.hyperlink_to(egui::RichText::new(f.name).small(), f.url);
+            ui.horizontal(|ui| {
+                if ui
+                    .link(egui::RichText::new(f.name).small())
+                    .on_hover_text(format!("Open in your browser:\n{}", f.url))
+                    .clicked()
+                {
+                    super::links::open(f.url);
+                }
+                // If no browser opens (a desktop without a default one), the
+                // address can still be pasted into one.
+                if ui.small_button("Copy link").on_hover_text(f.url).clicked() {
+                    ui.ctx().copy_text(f.url.to_string());
+                }
+            });
         }
     }
 

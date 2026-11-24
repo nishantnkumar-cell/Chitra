@@ -9,6 +9,7 @@ mod dbus;
 mod desktop_theme;
 mod enhance_dialog;
 mod headerbar;
+mod links;
 mod loader;
 mod passport_dialog;
 mod print;
@@ -1260,10 +1261,10 @@ impl App {
                 self.show_help = true;
             }
             if item(ui, true, "User guide", "") {
-                let _ = chitra::update::open(chitra::update::USER_GUIDE);
+                links::open(chitra::update::USER_GUIDE);
             }
             if item(ui, true, "Report a problem", "") {
-                let _ = chitra::update::open(chitra::update::ISSUES);
+                links::open(chitra::update::ISSUES);
             }
             if item(ui, true, "Check for updates…", "") {
                 self.about.check_now(ctx);
