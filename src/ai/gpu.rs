@@ -936,7 +936,9 @@ fn run_tile(
     rx.recv().ok()?.ok()?;
     let data: Vec<f32> = {
         let view = slice.get_mapped_range().ok()?;
-        view.chunks_exact(4)
+        view.as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     };

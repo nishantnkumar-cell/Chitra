@@ -383,11 +383,12 @@ impl App {
         let current = self.current_path();
         // Keep a file opened directly even if its extension is unusual.
         let mut entries = scan.entries;
-        if let Some(cur) = &current {
-            if !entries.iter().any(|e| &e.path == cur) && cur.exists() {
-                entries.push(Entry::from_path(cur.clone()));
-                folder::sort(&mut entries, self.settings.sort, self.settings.sort_desc);
-            }
+        if let Some(cur) = &current
+            && !entries.iter().any(|e| &e.path == cur)
+            && cur.exists()
+        {
+            entries.push(Entry::from_path(cur.clone()));
+            folder::sort(&mut entries, self.settings.sort, self.settings.sort_desc);
         }
         self.entries = entries;
         self.index = current
@@ -757,11 +758,11 @@ impl App {
 
         // Shortcuts with extra modifiers first: a plain pattern also matches
         // presses that add Shift.
-        if key(cmd_shift, Key::C) {
-            if let Some(p) = self.current_path() {
-                ctx.copy_text(p.display().to_string());
-                self.toast("Path copied");
-            }
+        if key(cmd_shift, Key::C)
+            && let Some(p) = self.current_path()
+        {
+            ctx.copy_text(p.display().to_string());
+            self.toast("Path copied");
         }
         if key(cmd, Key::C) {
             self.copy_image();
@@ -2607,10 +2608,10 @@ fn background(theme: egui::Theme) -> Color32 {
 /// and for paths handed to other programs.
 fn simplify_path(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
-    if let Some(rest) = s.strip_prefix(r"\\?\") {
-        if !rest.starts_with("UNC\\") {
-            return PathBuf::from(rest.to_string());
-        }
+    if let Some(rest) = s.strip_prefix(r"\\?\")
+        && !rest.starts_with("UNC\\")
+    {
+        return PathBuf::from(rest.to_string());
     }
     p
 }

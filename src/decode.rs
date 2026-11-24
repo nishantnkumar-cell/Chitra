@@ -212,7 +212,9 @@ fn decode_heif(data: &[u8]) -> Result<Decoded, DecodeError> {
         } else {
             let px = heif
                 .data
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| [scale(p[0]), scale(p[1]), scale(p[2])])
                 .collect();
             DynamicImage::ImageRgb16(ImageBuffer::from_raw(w, h, px).ok_or_else(invalid)?)
@@ -475,7 +477,9 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
                 let mut raw = vec![0u8; samples * 2];
                 let more = decode_jxl_frame(&mut decoder, &mut input, &mut runner, &mut raw, h)?;
                 let buf: Vec<u16> = raw
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| u16::from_ne_bytes([c[0], c[1]]))
                     .collect();
                 (buffer16_to_dynamic(w32, h32, channels, buf)?, more)
@@ -484,7 +488,9 @@ fn decode_jxl(data: &[u8], opts: DecodeOptions) -> Result<Decoded, DecodeError> 
                 let mut raw = vec![0u8; samples * 4];
                 let more = decode_jxl_frame(&mut decoder, &mut input, &mut runner, &mut raw, h)?;
                 let buf: Vec<f32> = raw
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 let img = image::Rgba32FImage::from_raw(w32, h32, buf)

@@ -95,7 +95,9 @@ impl<'a> Weights<'a> {
             .and_then(|d| d.get(t.offset * 4..(t.offset + n) * 4))
             .ok_or_else(|| format!("{}: data of {name} missing", self.file))?;
         Ok(data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect())
     }
