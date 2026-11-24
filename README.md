@@ -430,7 +430,7 @@ files is memory safe:
 | HEIF/HEIC decode | `heifer` (its own HEVC decoder, no `unsafe`; output matches libheif) |
 | JPEG XL lossless encode | `zune-jpegxl` |
 | Lossy WebP / JPEG XL encode | `zenwebp`, `jxl-encoder` |
-| JPEG to JPEG XL repacking | `jxl-encoder` with `zenjpeg` (vendored with a build fix) |
+| JPEG to JPEG XL repacking | `jxl-encoder` with `zenjpeg` |
 | UI | `eframe`/`egui` (OpenGL) |
 
 Chitra's own library code is `#![forbid(unsafe_code)]`. The only `unsafe` in
