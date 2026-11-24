@@ -62,11 +62,6 @@ impl Entry {
     }
 }
 
-/// Supported images directly inside `dir` (not recursive), unsorted.
-pub fn list_images(dir: &Path) -> io::Result<Vec<Entry>> {
-    list_files(dir, false)
-}
-
 /// Supported images and phone videos directly inside `dir`, unsorted.
 pub fn list_media(dir: &Path) -> io::Result<Vec<Entry>> {
     list_files(dir, true)
@@ -175,43 +170,6 @@ pub fn sort(entries: &mut [Entry], key: SortKey, descending: bool) {
     });
 }
 
-/// Expand files and folders into a list of image files for batch work.
-/// Explicitly named files are always kept; folders contribute supported images.
-pub fn collect_inputs(paths: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for path in paths {
-        if path.is_dir() {
-            walk(path, recursive, &mut out);
-        } else {
-            out.push(path.clone());
-        }
-    }
-    out
-}
-
-fn walk(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
-    let Ok(read) = fs::read_dir(dir) else { return };
-    let mut files = Vec::new();
-    let mut dirs = Vec::new();
-    for item in read.flatten() {
-        let path = item.path();
-        let Ok(kind) = item.file_type() else { continue };
-        if kind.is_dir() {
-            dirs.push(path);
-        } else if kind.is_file() && is_supported_path(&path) {
-            files.push(path);
-        }
-    }
-    files.sort_by(|a, b| natural_cmp(a, b));
-    out.extend(files);
-    if recursive {
-        dirs.sort_by(|a, b| natural_cmp(a, b));
-        for d in dirs {
-            walk(&d, true, out);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,7 +240,7 @@ mod tests {
             v.sort();
             v
         };
-        assert_eq!(names(list_images(dir.path()).unwrap()), ["a.jpg"]);
+        assert_eq!(names(list_files(dir.path(), false).unwrap()), ["a.jpg"]);
         assert_eq!(
             names(list_media(dir.path()).unwrap()),
             ["IMG_0002.MOV", "VID_3.mp4", "a.jpg"]

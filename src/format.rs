@@ -90,11 +90,6 @@ impl Format {
         self != Format::Heif
     }
 
-    /// Whether this format can hold an alpha channel when written by Chitra.
-    pub fn supports_alpha(self) -> bool {
-        !matches!(self, Format::Jpeg | Format::Bmp)
-    }
-
     pub fn from_extension(ext: &str) -> Option<Format> {
         let ext = ext.to_ascii_lowercase();
         Format::ALL
