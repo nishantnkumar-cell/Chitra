@@ -126,6 +126,19 @@ strip = true
 [profile.release.package.image]
 opt-level = 3
 
+# The AVIF decoder: measured 24 s -> 14 s for a 24 MP photo at opt-level 3.
+[profile.release.package.oxideav-av1]
+opt-level = 3
+
+[profile.release.package.oxideav-avif]
+opt-level = 3
+
+[profile.release.package.oxideav-core]
+opt-level = 3
+
+[profile.release.package.oxideav-heif]
+opt-level = 3
+
 [profile.release.package.zune-jpeg]
 opt-level = 3
 

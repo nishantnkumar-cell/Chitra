@@ -228,7 +228,12 @@ fn load(
     if !still_wanted(shared, req) {
         return None;
     }
+    let animated = decoded.is_animated();
     let full_size = [decoded.image.width(), decoded.image.height()];
+    let color = format!("{:?}", decoded.image.color());
+    let has_icc = decoded.icc.is_some();
+    let format = decoded.format;
+    let exif_block = decoded.exif;
     let max = req.max_side.max(16);
     let shrink = |img: DynamicImage| -> DynamicImage {
         if img.width() <= max && img.height() <= max {
@@ -245,9 +250,10 @@ fn load(
     let name = req.path.to_string_lossy();
     let mut frames = Vec::new();
     let mut tex_size = [0, 0];
-    if decoded.is_animated() {
-        for (i, frame) in decoded.frames.iter().enumerate() {
-            let img = shrink(DynamicImage::ImageRgba8(frame.image.clone())).into_rgba8();
+    // The decoded pixels are moved, not copied: a 24 MP photo is ~96 MB.
+    if animated {
+        for (i, frame) in decoded.frames.into_iter().enumerate() {
+            let img = shrink(DynamicImage::ImageRgba8(frame.image)).into_rgba8();
             tex_size = [img.width() as usize, img.height() as usize];
             let color = ColorImage::from_rgba_unmultiplied(tex_size, img.as_raw());
             frames.push((
@@ -256,7 +262,7 @@ fn load(
             ));
         }
     } else {
-        let img = shrink(decoded.image.clone()).into_rgba8();
+        let img = shrink(decoded.image).into_rgba8();
         tex_size = [img.width() as usize, img.height() as usize];
         let color = ColorImage::from_rgba_unmultiplied(tex_size, img.as_raw());
         frames.push((
@@ -268,8 +274,7 @@ fn load(
     let exif = if req.kind == Kind::Thumb {
         Vec::new()
     } else {
-        decoded
-            .exif
+        exif_block
             .as_deref()
             .map(metadata::readable_fields)
             .unwrap_or_default()
@@ -278,11 +283,11 @@ fn load(
         frames,
         tex_size,
         full_size,
-        format: Some(decoded.format),
-        color: format!("{:?}", decoded.image.color()),
+        format: Some(format),
+        color,
         decode_time: start.elapsed(),
         exif,
-        has_icc: decoded.icc.is_some(),
+        has_icc,
     })))
 }
 

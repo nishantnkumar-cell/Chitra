@@ -8,11 +8,18 @@ use std::process::Command;
 /// `curl` set up for HTTPS only, failing on HTTP errors, without a console
 /// window flashing up on Windows.
 pub fn curl() -> Command {
-    let mut cmd = Command::new("curl");
+    let mut cmd = Command::new(curl_program());
     cmd.args([
         "-fsSL",
         "--proto",
         "=https",
+        // A redirect must stay on HTTPS too, or a downgrade would slip by.
+        "--proto-redir",
+        "=https",
+        // Nothing Chitra fetches is near this size (the biggest model is about
+        // 70 MB), so a stream that never ends cannot fill the disk.
+        "--max-filesize",
+        "1073741824",
         "--tlsv1.2",
         "--retry",
         "2",
@@ -26,6 +33,21 @@ pub fn curl() -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+/// On Windows the system's own `curl.exe`, by full path, so a program of that
+/// name next to Chitra or elsewhere on the search path is not used instead.
+#[cfg(windows)]
+fn curl_program() -> std::path::PathBuf {
+    std::env::var_os("SystemRoot")
+        .map(|r| Path::new(&r).join("System32").join("curl.exe"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| "curl".into())
+}
+
+#[cfg(not(windows))]
+fn curl_program() -> &'static str {
+    "curl"
 }
 
 /// The body of a small HTTPS GET.

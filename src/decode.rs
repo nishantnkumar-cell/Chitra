@@ -22,6 +22,10 @@ use crate::metadata;
 pub(crate) const MAX_ALLOC: u64 = 2 << 30;
 /// Animated files with more frames than this are shown as a still image.
 const MAX_FRAMES: usize = 2000;
+/// Bytes of all the frames of one animation together (each frame is a full
+/// canvas in RGBA). Past this the file is shown as a still image: 2,000 frames
+/// of a big canvas would otherwise use all the memory. It also caps one frame.
+const MAX_ANIMATION_BYTES: usize = 768 << 20;
 
 /// One frame of an animation, already composited onto the full canvas.
 #[derive(Clone)]
@@ -129,6 +133,12 @@ fn image_format(format: Format) -> image::ImageFormat {
         Format::Heif => unreachable!("HEIF is decoded by heifer"),
         Format::Avif => unreachable!("AVIF is decoded by oxideav-avif"),
     }
+}
+
+fn animation_limits() -> Limits {
+    let mut limits = Limits::default();
+    limits.max_alloc = Some(MAX_ANIMATION_BYTES as u64);
+    limits
 }
 
 fn limits() -> Limits {
@@ -267,18 +277,20 @@ fn decode_animation(data: &[u8], format: Format) -> Result<Vec<Frame>, DecodeErr
     let frames = match format {
         Format::Gif => {
             let mut decoder = GifDecoder::new(Cursor::new(data))?;
-            decoder.set_limits(limits())?;
+            decoder.set_limits(animation_limits())?;
             collect_frames(decoder.into_frames())
         }
         Format::WebP => {
-            let decoder = WebPDecoder::new(Cursor::new(data))?;
+            let mut decoder = WebPDecoder::new(Cursor::new(data))?;
+            decoder.set_limits(animation_limits())?;
             if !decoder.has_animation() {
                 return Ok(Vec::new());
             }
             collect_frames(decoder.into_frames())
         }
         Format::Png => {
-            let decoder = PngDecoder::new(Cursor::new(data))?;
+            let mut decoder = PngDecoder::new(Cursor::new(data))?;
+            decoder.set_limits(animation_limits())?;
             if !decoder.is_apng()? {
                 return Ok(Vec::new());
             }
@@ -291,14 +303,29 @@ fn decode_animation(data: &[u8], format: Format) -> Result<Vec<Frame>, DecodeErr
 }
 
 fn collect_frames(frames: image::Frames<'_>) -> Result<Vec<Frame>, DecodeError> {
+    collect_frames_within(frames, MAX_ANIMATION_BYTES)
+}
+
+/// The frames, or none at all (so the file shows as a still image) when they
+/// would together take more than `budget` bytes.
+fn collect_frames_within(
+    frames: image::Frames<'_>,
+    budget: usize,
+) -> Result<Vec<Frame>, DecodeError> {
     let mut out = Vec::new();
+    let mut total = 0usize;
     for frame in frames.take(MAX_FRAMES + 1) {
         let frame = frame?;
         let (num, den) = frame.delay().numer_denom_ms();
         let ms = num.checked_div(den).unwrap_or(0);
+        let image = frame.into_buffer();
+        total = total.saturating_add(image.as_raw().len());
+        if total > budget {
+            return Ok(Vec::new());
+        }
         out.push(Frame {
             delay: normalize_delay(ms),
-            image: frame.into_buffer(),
+            image,
         });
     }
     if out.len() > MAX_FRAMES {
@@ -665,4 +692,43 @@ pub fn dimensions(path: &Path) -> Result<(u32, u32, Format), DecodeError> {
     let reader = ImageReader::with_format(Cursor::new(&data), image_format(format));
     let (w, h) = reader.into_dimensions()?;
     Ok((w, h, format))
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use image::codecs::gif::{GifDecoder, GifEncoder};
+
+    fn gif(frames: u8, side: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut buf);
+            for i in 0..frames {
+                let img = RgbaImage::from_pixel(side, side, image::Rgba([i * 40, 9, 9, 255]));
+                enc.encode_frame(image::Frame::new(img)).unwrap();
+            }
+        }
+        buf
+    }
+
+    #[test]
+    fn an_animation_over_its_memory_budget_is_shown_as_a_still() {
+        let data = gif(3, 32);
+        let frame_bytes = 32 * 32 * 4;
+        let all = collect_frames_within(
+            GifDecoder::new(Cursor::new(&data)).unwrap().into_frames(),
+            3 * frame_bytes,
+        )
+        .unwrap();
+        assert_eq!(all.len(), 3);
+        let none = collect_frames_within(
+            GifDecoder::new(Cursor::new(&data)).unwrap().into_frames(),
+            2 * frame_bytes,
+        )
+        .unwrap();
+        assert!(
+            none.is_empty(),
+            "over budget: no animation, the still shows"
+        );
+    }
 }

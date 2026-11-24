@@ -42,6 +42,7 @@ pub struct ConvertDialog {
     rename: String,
     conflict: ConflictPolicy,
     keep_metadata: bool,
+    strip_location: bool,
     running: Option<Running>,
     last: Option<Report>,
     /// Set when a conversion finished, so the viewer can rescan its folder.
@@ -65,6 +66,7 @@ impl Default for ConvertDialog {
             rename: "{name}".into(),
             conflict: ConflictPolicy::Rename,
             keep_metadata: true,
+            strip_location: false,
             running: None,
             last: None,
             finished: false,
@@ -238,6 +240,14 @@ impl ConvertDialog {
 
                     ui.label("Metadata");
                     ui.checkbox(&mut self.keep_metadata, "Keep EXIF and colour profile");
+                    ui.add_enabled(
+                        self.keep_metadata,
+                        egui::Checkbox::new(&mut self.strip_location, "Remove the GPS location"),
+                    )
+                    .on_hover_text(
+                        "Keeps the date and camera details but removes where the photo \
+                         was taken. Handy before sharing.",
+                    );
                     ui.end_row();
                 });
         });
@@ -332,6 +342,7 @@ impl ConvertDialog {
         };
         opts.conflict = self.conflict;
         opts.keep_metadata = self.keep_metadata;
+        opts.strip_location = self.strip_location;
         opts.recursive = recursive;
 
         let jobs = convert::plan(&inputs, &opts);

@@ -358,8 +358,7 @@ impl Dialog {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn print(self) -> Result<String, String> {
         let pdf = self.pdf()?;
-        let path = std::env::temp_dir().join(format!("chitra-print-{}.pdf", std::process::id()));
-        std::fs::write(&path, pdf).map_err(|e| e.to_string())?;
+        let path = write_private_temp("chitra-print", &pdf).map_err(|e| e.to_string())?;
         let printer = &self.printers[self.printer];
         let r = cups::submit(
             &path,
@@ -399,5 +398,67 @@ impl Dialog {
             ),
             Err(e) => format!("Could not save the PDF: {e}"),
         }
+    }
+}
+
+/// Writes `bytes` to a new file only this user can read, in the user's runtime
+/// folder when there is one (else the temporary folder), and returns its path.
+/// The file is created exclusively, so a link or file someone else left at a
+/// guessed name is never followed or overwritten.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn write_private_temp(stem: &str, bytes: &[u8]) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|d| d.is_dir())
+        .unwrap_or_else(std::env::temp_dir);
+    for attempt in 0..16u32 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let path = dir.join(format!(
+            "{stem}-{}-{nanos:08x}{attempt}.pdf",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(bytes) {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(e);
+                }
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::other(
+        "cannot make a private temporary file",
+    ))
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod private_temp_tests {
+    use super::write_private_temp;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_file_is_private_new_and_never_a_followed_link() {
+        let p = write_private_temp("chitra-test", b"pdf").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"pdf");
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let q = write_private_temp("chitra-test", b"pdf").unwrap();
+        assert_ne!(p, q);
+        let _ = std::fs::remove_file(p);
+        let _ = std::fs::remove_file(q);
     }
 }

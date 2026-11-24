@@ -96,8 +96,7 @@ fn print_on(
 
     // Step 2: the PDF, as an open file that is already gone from the folder.
     let pdf = make_pdf(setup).map_err(Error::Failed)?;
-    let tmp = std::env::temp_dir().join(format!("chitra-print-{}-{token}.pdf", std::process::id()));
-    std::fs::write(&tmp, &pdf)?;
+    let tmp = super::write_private_temp(&format!("chitra-print-{token}"), &pdf)?;
     let file = File::open(&tmp);
     let _ = std::fs::remove_file(&tmp);
     let file = file?;
