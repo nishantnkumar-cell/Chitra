@@ -135,7 +135,7 @@ pub fn version_line() -> String {
 }
 
 fn open_link(url: &str) {
-    let _ = update::open(url);
+    super::links::open(url);
 }
 
 impl About {
