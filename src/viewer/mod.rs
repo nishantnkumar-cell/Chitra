@@ -3,6 +3,7 @@
 //! egui/eframe (OpenGL).
 
 mod about;
+mod batch;
 mod convert_dialog;
 #[cfg(target_os = "linux")]
 mod dbus;

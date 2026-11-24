@@ -9,9 +9,8 @@
 //! Saving runs the same code on the whole photo through the batch converter.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, Sense, TextureHandle, Vec2};
@@ -23,6 +22,7 @@ use chitra::encode;
 use chitra::enhance::{self, EnhanceOptions};
 use chitra::format::Format;
 
+use super::batch::Batch;
 use super::util::{TreeCount, human_bytes};
 
 /// Output formats offered here.
@@ -83,12 +83,6 @@ struct Source {
     full: Arc<DynamicImage>,
 }
 
-struct Running {
-    total: usize,
-    done: Arc<AtomicUsize>,
-    report: Arc<Mutex<Option<Report>>>,
-}
-
 pub struct EnhanceDialog {
     pub open: bool,
     source: Option<Source>,
@@ -138,7 +132,7 @@ pub struct EnhanceDialog {
     rename_auto: bool,
     conflict: ConflictPolicy,
     keep_metadata: bool,
-    running: Option<Running>,
+    batch: Batch,
     last: Option<Report>,
     /// Set when saving finished, so the viewer can rescan its folder.
     pub finished: bool,
@@ -181,7 +175,7 @@ impl Default for EnhanceDialog {
             rename_auto: true,
             conflict: ConflictPolicy::Rename,
             keep_metadata: true,
-            running: None,
+            batch: Batch::default(),
             last: None,
             finished: false,
         }
@@ -281,7 +275,7 @@ impl EnhanceDialog {
         if self.loading.is_some()
             || self.pending.is_some()
             || self.ai_pending.is_some()
-            || self.running.is_some()
+            || self.batch.busy()
             || self.ai_job.is_some()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -363,12 +357,7 @@ impl EnhanceDialog {
                 Err(TryRecvError::Disconnected) => self.ai_pending = None,
             }
         }
-        let done = self
-            .running
-            .as_ref()
-            .and_then(|r| r.report.lock().unwrap_or_else(|e| e.into_inner()).take());
-        if let Some(report) = done {
-            self.running = None;
+        if let Some(report) = self.batch.poll() {
             self.last = Some(report);
             self.finished = true;
             // The tree may hold new files now.
@@ -1202,7 +1191,7 @@ impl EnhanceDialog {
     fn save_controls(&mut self, ui: &mut egui::Ui, dir: Option<&Path>, folder: &[PathBuf]) {
         ui.heading("Save");
         ui.add_space(4.0);
-        let busy = self.running.is_some();
+        let busy = self.batch.busy();
         ui.add_enabled_ui(!busy, |ui| {
             egui::Grid::new("enhance-save-grid")
                 .num_columns(2)
@@ -1299,13 +1288,7 @@ impl EnhanceDialog {
         });
         ui.add_space(6.0);
 
-        if let Some(run) = &self.running {
-            let done = run.done.load(Ordering::Relaxed);
-            ui.add(
-                egui::ProgressBar::new(done as f32 / run.total.max(1) as f32)
-                    .text(format!("{done} / {}", run.total))
-                    .animate(true),
-            );
+        if self.batch.ui(ui) {
             return;
         }
 
@@ -1390,20 +1373,8 @@ impl EnhanceDialog {
         opts.recursive = recursive;
 
         let jobs = convert::plan(&inputs, &opts);
-        let done = Arc::new(AtomicUsize::new(0));
-        let report = Arc::new(Mutex::new(None));
-        self.running = Some(Running {
-            total: jobs.len(),
-            done: done.clone(),
-            report: report.clone(),
-        });
+        self.batch.start(jobs, opts);
         self.last = None;
-        std::thread::spawn(move || {
-            let r = convert::run(jobs, &opts, |_| {
-                done.fetch_add(1, Ordering::Relaxed);
-            });
-            *report.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
-        });
     }
 }
 

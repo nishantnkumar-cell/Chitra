@@ -2,8 +2,6 @@
 //! `chitra convert`, running on a background thread.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 
@@ -12,18 +10,13 @@ use chitra::encode;
 use chitra::format::Format;
 use chitra::resize::ResizeSpec;
 
+use super::batch::Batch;
 use super::util::{TreeCount, human_bytes};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
     Current,
     Folder,
-}
-
-struct Running {
-    total: usize,
-    done: Arc<AtomicUsize>,
-    report: Arc<Mutex<Option<Report>>>,
 }
 
 pub struct ConvertDialog {
@@ -43,7 +36,7 @@ pub struct ConvertDialog {
     conflict: ConflictPolicy,
     keep_metadata: bool,
     strip_location: bool,
-    running: Option<Running>,
+    batch: Batch,
     last: Option<Report>,
     /// Set when a conversion finished, so the viewer can rescan its folder.
     pub finished: bool,
@@ -67,7 +60,7 @@ impl Default for ConvertDialog {
             conflict: ConflictPolicy::Rename,
             keep_metadata: true,
             strip_location: false,
-            running: None,
+            batch: Batch::default(),
             last: None,
             finished: false,
         }
@@ -95,18 +88,13 @@ impl ConvertDialog {
             .show(ctx, |ui| self.contents(ui, current, dir, folder));
         // Closing the window while converting just hides it; work continues.
         self.open = open;
-        if self.running.is_some() {
+        if self.batch.busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
 
     fn poll(&mut self) {
-        let done = self
-            .running
-            .as_ref()
-            .and_then(|r| r.report.lock().unwrap_or_else(|e| e.into_inner()).take());
-        if let Some(report) = done {
-            self.running = None;
+        if let Some(report) = self.batch.poll() {
             self.last = Some(report);
             self.finished = true;
             // The tree may hold new files now.
@@ -121,7 +109,7 @@ impl ConvertDialog {
         dir: Option<&Path>,
         folder: &[PathBuf],
     ) {
-        let busy = self.running.is_some();
+        let busy = self.batch.busy();
         ui.add_enabled_ui(!busy, |ui| {
             egui::Grid::new("convert-grid")
                 .num_columns(2)
@@ -253,13 +241,7 @@ impl ConvertDialog {
         });
 
         ui.separator();
-        if let Some(run) = &self.running {
-            let done = run.done.load(Ordering::Relaxed);
-            ui.add(
-                egui::ProgressBar::new(done as f32 / run.total.max(1) as f32)
-                    .text(format!("{done} / {}", run.total))
-                    .animate(true),
-            );
+        if self.batch.ui(ui) {
             return;
         }
 
@@ -346,19 +328,7 @@ impl ConvertDialog {
         opts.recursive = recursive;
 
         let jobs = convert::plan(&inputs, &opts);
-        let done = Arc::new(AtomicUsize::new(0));
-        let report = Arc::new(Mutex::new(None));
-        self.running = Some(Running {
-            total: jobs.len(),
-            done: done.clone(),
-            report: report.clone(),
-        });
+        self.batch.start(jobs, opts);
         self.last = None;
-        std::thread::spawn(move || {
-            let r = convert::run(jobs, &opts, |_| {
-                done.fetch_add(1, Ordering::Relaxed);
-            });
-            *report.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
-        });
     }
 }
