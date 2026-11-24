@@ -73,13 +73,12 @@ impl Player {
 
         playbin.set_property("uri", uri.as_str());
         playbin.set_property("video-sink", &sink);
-        if !options.audio {
-            if let Ok(fake) = gst::ElementFactory::make("fakesink")
+        if !options.audio
+            && let Ok(fake) = gst::ElementFactory::make("fakesink")
                 .property("sync", true)
                 .build()
-            {
-                playbin.set_property("audio-sink", &fake);
-            }
+        {
+            playbin.set_property("audio-sink", &fake);
         }
         playbin.set_property("volume", options.volume as f64);
         playbin.set_property("mute", options.muted);

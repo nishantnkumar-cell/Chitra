@@ -210,10 +210,10 @@ impl ConvertDialog {
                             None => "Same folder as each photo".to_string(),
                         };
                         ui.label(label);
-                        if ui.button("Choose…").clicked() {
-                            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                self.out_dir = Some(dir);
-                            }
+                        if ui.button("Choose…").clicked()
+                            && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                        {
+                            self.out_dir = Some(dir);
                         }
                         if self.out_dir.is_some() && ui.small_button("Reset").clicked() {
                             self.out_dir = None;

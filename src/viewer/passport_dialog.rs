@@ -358,54 +358,54 @@ impl PassportDialog {
             self.guess_marks(full.0, full.1);
             return;
         }
-        if response.drag_started() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let near = |p: Option<(f32, f32)>| {
-                    p.map(|p| to_screen(p).distance(pos) < 14.0)
-                        .unwrap_or(false)
-                };
-                self.grab = if near(self.chin) {
-                    Some(Grab::Chin)
-                } else if near(self.crown) {
-                    Some(Grab::Crown)
-                } else {
-                    None
-                };
-            }
+        if response.drag_started()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let near = |p: Option<(f32, f32)>| {
+                p.map(|p| to_screen(p).distance(pos) < 14.0)
+                    .unwrap_or(false)
+            };
+            self.grab = if near(self.chin) {
+                Some(Grab::Chin)
+            } else if near(self.crown) {
+                Some(Grab::Crown)
+            } else {
+                None
+            };
         }
-        if response.dragged() {
-            if let (Some(g), Some(pos)) = (self.grab, response.interact_pointer_pos()) {
-                let p = to_image(rect.clamp(pos));
-                match g {
-                    Grab::Crown => self.crown = Some(p),
-                    Grab::Chin => self.chin = Some(p),
-                }
-                self.result_dirty = true;
+        if response.dragged()
+            && let (Some(g), Some(pos)) = (self.grab, response.interact_pointer_pos())
+        {
+            let p = to_image(rect.clamp(pos));
+            match g {
+                Grab::Crown => self.crown = Some(p),
+                Grab::Chin => self.chin = Some(p),
             }
+            self.result_dirty = true;
         }
         if response.drag_stopped() {
             self.grab = None;
         }
-        if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let p = to_image(pos);
-                match self.next_click {
-                    Some(Grab::Crown) => {
-                        // Keep the guessed head height until the chin is clicked.
-                        if let (Some(a), Some(b)) = (self.crown, self.chin) {
-                            self.chin = Some((p.0 + b.0 - a.0, p.1 + b.1 - a.1));
-                        }
-                        self.crown = Some(p);
-                        self.next_click = Some(Grab::Chin);
+        if response.clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let p = to_image(pos);
+            match self.next_click {
+                Some(Grab::Crown) => {
+                    // Keep the guessed head height until the chin is clicked.
+                    if let (Some(a), Some(b)) = (self.crown, self.chin) {
+                        self.chin = Some((p.0 + b.0 - a.0, p.1 + b.1 - a.1));
                     }
-                    Some(Grab::Chin) => {
-                        self.chin = Some(p);
-                        self.next_click = None;
-                    }
-                    None => {}
+                    self.crown = Some(p);
+                    self.next_click = Some(Grab::Chin);
                 }
-                self.result_dirty = true;
+                Some(Grab::Chin) => {
+                    self.chin = Some(p);
+                    self.next_click = None;
+                }
+                None => {}
             }
+            self.result_dirty = true;
         }
 
         let stroke = Stroke::new(2.0, MARK);
@@ -539,11 +539,10 @@ impl PassportDialog {
                 .button("Reset")
                 .on_hover_text("Back to the starting guess")
                 .clicked()
+                && let Some(src) = &self.source
             {
-                if let Some(src) = &self.source {
-                    let (w, h) = (src.full.width() as f32, src.full.height() as f32);
-                    self.guess_marks(w, h);
-                }
+                let (w, h) = (src.full.width() as f32, src.full.height() as f32);
+                self.guess_marks(w, h);
             }
         });
         ui.add_space(6.0);
