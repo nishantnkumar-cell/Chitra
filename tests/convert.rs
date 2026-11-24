@@ -194,6 +194,66 @@ fn metadata_is_kept_upright_or_stripped() {
     assert!(stripped.exif.is_none());
 }
 
+#[test]
+fn the_gps_location_can_be_removed_while_the_rest_of_the_exif_stays() {
+    use exif::experimental::Writer;
+    use exif::{Field, In, Rational, Tag, Value};
+
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("trip.jpg");
+    let fields = [
+        Field {
+            tag: Tag::Make,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![b"TestCam".to_vec()]),
+        },
+        Field {
+            tag: Tag::GPSLatitudeRef,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![b"N".to_vec()]),
+        },
+        Field {
+            tag: Tag::GPSLatitude,
+            ifd_num: In::PRIMARY,
+            value: Value::Rational(vec![
+                Rational { num: 12, denom: 1 },
+                Rational { num: 34, denom: 1 },
+                Rational { num: 56, denom: 1 },
+            ]),
+        },
+    ];
+    let mut w = Writer::new();
+    for f in &fields {
+        w.push_field(f);
+    }
+    let mut block = std::io::Cursor::new(Vec::new());
+    w.write(&mut block, true).unwrap();
+    let mut enc = EncodeOptions::new(Format::Jpeg);
+    enc.exif = Some(block.into_inner());
+    let mut f = fs::File::create(&input).unwrap();
+    encode(&pattern_rgb(40, 20), &[], &enc, &mut f).unwrap();
+    drop(f);
+
+    let read = |out: &Path| {
+        let d = decode_file(out, DecodeOptions::default()).unwrap();
+        exif::Reader::new()
+            .read_raw(d.exif.expect("EXIF copied"))
+            .unwrap()
+    };
+    let mut opts = ConvertOptions::new(Format::Png);
+    opts.out_dir = Some(dir.path().join("keep"));
+    run(plan(std::slice::from_ref(&input), &opts), &opts, |_| {});
+    let kept = read(&dir.path().join("keep/trip.png"));
+    assert!(kept.get_field(Tag::GPSLatitude, In::PRIMARY).is_some());
+
+    opts.strip_location = true;
+    opts.out_dir = Some(dir.path().join("clean"));
+    run(plan(&[input], &opts), &opts, |_| {});
+    let clean = read(&dir.path().join("clean/trip.png"));
+    assert!(clean.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());
+    assert!(clean.get_field(Tag::Make, In::PRIMARY).is_some());
+}
+
 #[cfg(feature = "lossy-encoders")]
 #[test]
 fn jpeg_to_jpeg_xl_is_repacked() {

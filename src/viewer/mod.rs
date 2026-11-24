@@ -211,9 +211,10 @@ impl App {
             has_subfolders: false,
             overview_auto: false,
             ctx: ctx.clone(),
-            // Two workers for the photo being viewed and its neighbours (each
-            // decode is itself multithreaded); the rest for thumbnails.
-            loader: Loader::new(ctx.clone(), 2, "decode"),
+            // Up to four workers for the photo being viewed and its neighbours: a
+            // slow, single-core decode (AVIF, WebP) must not hold up the photo you are
+            // moving to. The other cores make thumbnails.
+            loader: Loader::new(ctx.clone(), (cores / 2).clamp(2, 4), "decode"),
             thumb_loader: Loader::new(ctx.clone(), cores.clamp(2, 8), "thumb"),
             cache: HashMap::new(),
             thumbs: HashMap::new(),
