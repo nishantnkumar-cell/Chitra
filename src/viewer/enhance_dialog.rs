@@ -649,6 +649,108 @@ impl EnhanceDialog {
         }
     }
 
+    /// AI method: say whether the AI runs on the processor or a graphics
+    /// card, and let the user choose when Automatic picks wrongly.
+    fn ai_device_picker(&mut self, ui: &mut egui::Ui) {
+        use chitra::ai::{Compute, compute, compute_report, set_compute};
+        let report = compute_report(false);
+        let current = compute();
+        let describe = |name: &str| {
+            report
+                .adapters
+                .iter()
+                .find(|a| a.name == name)
+                .map_or(name.to_string(), |a| {
+                    format!("{} ({}, {})", a.name, a.kind, a.backend)
+                })
+        };
+        let auto_text = match &report.auto_pick {
+            Some(n) => format!("Automatic: {}", describe(n)),
+            None => "Automatic: processor".to_string(),
+        };
+        let selected = match &current {
+            Compute::Auto => auto_text.clone(),
+            Compute::Processor => "Processor only".to_string(),
+            Compute::Adapter(n) => describe(n),
+        };
+        ui.label("Run the AI on");
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("ai-device")
+                .width(330.0)
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    let mut pick = current.clone();
+                    ui.selectable_value(&mut pick, Compute::Auto, auto_text);
+                    ui.selectable_value(&mut pick, Compute::Processor, "Processor only");
+                    for a in report.adapters.iter().filter(|a| a.kind != "software") {
+                        ui.selectable_value(
+                            &mut pick,
+                            Compute::Adapter(a.name.clone()),
+                            describe(&a.name),
+                        );
+                    }
+                    if pick != current {
+                        set_compute(pick);
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Graphics cards are much faster than the processor for the AI. \
+                     Pick one here if Automatic chose the wrong one or the previews \
+                     are slow.",
+                );
+            if ui
+                .small_button("Look again")
+                .on_hover_text(
+                    "Search for graphics cards again, for example after installing a driver",
+                )
+                .clicked()
+            {
+                compute_report(true);
+            }
+        });
+        // What really happened, not just what was asked for.
+        let last = chitra::ai::last_device();
+        let (text, warn) = if last.is_empty() {
+            let will = match &current {
+                Compute::Processor => "the processor".to_string(),
+                Compute::Adapter(n) => format!("the graphics card {n}"),
+                Compute::Auto => report
+                    .auto_pick
+                    .as_ref()
+                    .map_or("the processor".to_string(), |n| {
+                        format!("the graphics card {n}")
+                    }),
+            };
+            (
+                format!("Not used yet. The next preview will use {will}."),
+                false,
+            )
+        } else {
+            let on_gpu = last.starts_with("graphics card");
+            (
+                format!("Last preview ran on the {last}."),
+                !on_gpu && current != Compute::Processor && report.auto_pick.is_some(),
+            )
+        };
+        if warn {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!("{text} A graphics card was available but was not used."),
+            );
+        } else {
+            ui.weak(text);
+        }
+        if !report.why_not.is_empty() {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!("Graphics card: {}.", report.why_not),
+            );
+        } else if report.adapters.is_empty() {
+            ui.weak("No graphics card was found, so the AI will use the processor (slow).");
+        }
+    }
+
     /// AI method: the button that makes (or remakes) the preview, and how
     /// it is going.
     fn ai_bar(&mut self, ui: &mut egui::Ui, full: &Arc<DynamicImage>) {
@@ -902,6 +1004,9 @@ impl EnhanceDialog {
                 self.ai_ready = chitra::ai::installed(self.ai_model);
                 self.ai_msg = None;
             }
+        }
+        if self.ai {
+            self.ai_device_picker(ui);
         }
         if self.ai && !self.ai_ready {
             self.ai_setup(ui);

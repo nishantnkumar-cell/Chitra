@@ -287,6 +287,116 @@ pub fn import(paths: &[PathBuf]) -> Result<usize, String> {
     Ok(taken)
 }
 
+// ----- where to run -------------------------------------------------------------
+
+/// Where the AI runs: the best graphics card if there is one, the processor,
+/// or one named graphics card. Saved in the settings as [`Compute::key`].
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum Compute {
+    #[default]
+    Auto,
+    Processor,
+    Adapter(String),
+}
+
+impl Compute {
+    /// The text kept in the settings file.
+    pub fn key(&self) -> String {
+        match self {
+            Compute::Auto => "auto".into(),
+            Compute::Processor => "cpu".into(),
+            Compute::Adapter(n) => format!("gpu:{n}"),
+        }
+    }
+
+    /// Reads [`Compute::key`]; anything else means Automatic.
+    pub fn from_key(s: &str) -> Compute {
+        match s.trim() {
+            "cpu" => Compute::Processor,
+            t => match t.strip_prefix("gpu:") {
+                Some(n) if !n.is_empty() => Compute::Adapter(n.to_string()),
+                _ => Compute::Auto,
+            },
+        }
+    }
+}
+
+static COMPUTE: Mutex<Compute> = Mutex::new(Compute::Auto);
+
+/// The choice in force.
+pub fn compute() -> Compute {
+    COMPUTE.lock().map(|c| c.clone()).unwrap_or_default()
+}
+
+/// Choose where the AI runs; takes effect with the next run.
+pub fn set_compute(c: Compute) {
+    if let Ok(mut g) = COMPUTE.lock() {
+        *g = c;
+    }
+}
+
+/// One graphics card (or software renderer) the system offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdapterEntry {
+    pub name: String,
+    /// "discrete", "integrated", "virtual", "software" or "other".
+    pub kind: String,
+    /// "Vulkan", "Dx12" or "Metal".
+    pub backend: String,
+}
+
+/// What this computer can run the AI on.
+#[derive(Clone, Debug, Default)]
+pub struct ComputeReport {
+    /// This build of Chitra can use a graphics card at all.
+    pub gpu_built: bool,
+    pub adapters: Vec<AdapterEntry>,
+    /// The card Automatic uses; `None` means the processor.
+    pub auto_pick: Option<String>,
+    /// Why the graphics card is not in use, if it is not.
+    pub why_not: String,
+}
+
+static REPORT: Mutex<Option<ComputeReport>> = Mutex::new(None);
+
+/// The cards found (looked up once; `rescan` looks again, for example after
+/// a driver install) and why the card is not used, if it is not.
+pub fn compute_report(rescan: bool) -> ComputeReport {
+    #[cfg(feature = "gpu")]
+    {
+        let mut slot = REPORT.lock().unwrap_or_else(|e| e.into_inner());
+        if rescan {
+            gpu::reset();
+            *slot = None;
+        }
+        let mut r = slot
+            .get_or_insert_with(|| {
+                let (adapters, auto_pick) = gpu::adapters();
+                ComputeReport {
+                    gpu_built: true,
+                    adapters,
+                    auto_pick,
+                    why_not: String::new(),
+                }
+            })
+            .clone();
+        r.why_not = if std::env::var_os("CHITRA_AI_CPU").is_some() {
+            "the CHITRA_AI_CPU setting keeps the AI on the processor".into()
+        } else {
+            gpu::why_not()
+        };
+        r
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (rescan, &REPORT);
+        ComputeReport {
+            why_not: "this build of Chitra has no graphics card support".into(),
+            ..Default::default()
+        }
+    }
+}
+
 /// Where the last run went: "graphics card (name)" or "processor".
 pub fn last_device() -> String {
     LAST_DEVICE.lock().map(|d| d.clone()).unwrap_or_default()
@@ -421,7 +531,8 @@ pub fn upscale(image: &DynamicImage, model: Model, noise: f32) -> Result<Dynamic
     let (tile, pad) = tile_override().unwrap_or(model.tiling());
 
     #[cfg(feature = "gpu")]
-    let gpu_out = if std::env::var_os("CHITRA_AI_CPU").is_none() {
+    let gpu_out = if std::env::var_os("CHITRA_AI_CPU").is_none() && compute() != Compute::Processor
+    {
         // wgpu panics on some driver failures (a lost device, for one);
         // treat that like any other GPU failure and use the processor.
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -601,6 +712,21 @@ fn finish(image: &DynamicImage, rgb: DynamicImage) -> Result<DynamicImage, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compute_choice_round_trips() {
+        for c in [
+            Compute::Auto,
+            Compute::Processor,
+            Compute::Adapter("NVIDIA GeForce RTX 4070 Ti".into()),
+        ] {
+            assert_eq!(Compute::from_key(&c.key()), c);
+        }
+        // Anything unknown or empty means Automatic.
+        assert_eq!(Compute::from_key(""), Compute::Auto);
+        assert_eq!(Compute::from_key("gpu:"), Compute::Auto);
+        assert_eq!(Compute::from_key("tpu"), Compute::Auto);
+    }
 
     #[test]
     fn model_ids_round_trip() {
