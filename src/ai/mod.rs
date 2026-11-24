@@ -287,6 +287,16 @@ pub fn import(paths: &[PathBuf]) -> Result<usize, String> {
     Ok(taken)
 }
 
+/// Parses `bytes` as model weights and asks for a few tensors, for fuzzing.
+#[doc(hidden)]
+pub fn fuzz_pth(bytes: &[u8]) {
+    if let Ok(w) = pth::Weights::parse("fuzz", bytes) {
+        let _ = w.has("conv_first.weight");
+        let _ = w.shape("conv_first.weight");
+        let _ = w.get("conv_first.weight", &[64, 3, 3, 3]);
+    }
+}
+
 // ----- where to run -------------------------------------------------------------
 
 /// Where the AI runs: the best graphics card if there is one, the processor,

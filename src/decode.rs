@@ -101,6 +101,17 @@ pub fn decode_file(path: &Path, opts: DecodeOptions) -> Result<Decoded, DecodeEr
     decode_bytes(&data, format, opts)
 }
 
+/// [`decode_bytes`] without the panic net: for fuzzing and tests, where a panic
+/// inside a codec is a bug to find, not something to absorb.
+#[doc(hidden)]
+pub fn decode_unisolated(
+    data: &[u8],
+    format: Format,
+    opts: DecodeOptions,
+) -> Result<Decoded, DecodeError> {
+    decode_unchecked(data, format, opts)
+}
+
 pub fn decode_bytes(
     data: &[u8],
     format: Format,
@@ -147,11 +158,28 @@ fn limits() -> Limits {
     limits
 }
 
+/// The size a GIF header declares for its screen (bytes 6..10, little-endian).
+fn gif_screen(data: &[u8]) -> Option<(u32, u32)> {
+    let h = data.get(6..10)?;
+    Some((
+        u32::from(u16::from_le_bytes([h[0], h[1]])),
+        u32::from(u16::from_le_bytes([h[2], h[3]])),
+    ))
+}
+
 fn decode_with_image(
     data: &[u8],
     format: Format,
     opts: DecodeOptions,
 ) -> Result<Decoded, DecodeError> {
+    // The GIF decoder allocates its whole screen when it is created, before any
+    // limit can apply, so a header claiming a huge screen is refused up front.
+    if format == Format::Gif
+        && let Some((w, h)) = gif_screen(data)
+        && u64::from(w) * u64::from(h) * 4 > MAX_ALLOC
+    {
+        return Err(DecodeError::Invalid("image too large".into()));
+    }
     let frames = if opts.animation {
         decode_animation(data, format)?
     } else {
@@ -713,6 +741,22 @@ mod budget_tests {
             }
         }
         buf
+    }
+
+    #[test]
+    fn a_gif_declaring_a_huge_screen_is_refused_without_allocating_it() {
+        // Found by the fuzzer: the header alone made the decoder ask for gigabytes.
+        let mut data = gif(1, 4);
+        data[6..10].copy_from_slice(&[0xE0, 0xA0, 0xE0, 0xB3]); // 41184 x 46048
+        assert_eq!(gif_screen(&data), Some((41184, 46048)));
+        for animation in [false, true] {
+            let opts = DecodeOptions { animation };
+            let r = decode_bytes(&data, Format::Gif, opts);
+            assert!(matches!(r, Err(DecodeError::Invalid(ref m)) if m.contains("too large")));
+        }
+        assert_eq!(gif_screen(b"GIF89a"), None);
+        // An ordinary GIF still decodes.
+        assert!(decode_bytes(&gif(2, 8), Format::Gif, DecodeOptions::default()).is_ok());
     }
 
     #[test]

@@ -1,0 +1,111 @@
+[package]
+name = "chitra-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chitra = { path = "..", default-features = false, features = ["lossy-encoders"] }
+
+# Not part of the main package or its Cargo.lock.
+[workspace]
+
+# The same patched AVIF decoder the app is built with.
+[patch.crates-io]
+oxideav-avif = { path = "../vendor/oxideav-avif" }
+
+[[bin]]
+name = "decode_auto"
+path = "fuzz_targets/decode_auto.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_jpeg"
+path = "fuzz_targets/decode_jpeg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_png"
+path = "fuzz_targets/decode_png.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_gif"
+path = "fuzz_targets/decode_gif.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_webp"
+path = "fuzz_targets/decode_webp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_bmp"
+path = "fuzz_targets/decode_bmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_jxl"
+path = "fuzz_targets/decode_jxl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_avif"
+path = "fuzz_targets/decode_avif.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_heif"
+path = "fuzz_targets/decode_heif.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pth"
+path = "fuzz_targets/pth.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "release_json"
+path = "fuzz_targets/release_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rename"
+path = "fuzz_targets/rename.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "exif"
+path = "fuzz_targets/exif.rs"
+test = false
+doc = false
+bench = false
+
