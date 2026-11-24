@@ -79,6 +79,8 @@ pub struct ConvertOptions {
     pub conflict: ConflictPolicy,
     /// Copy EXIF and ICC profile into the output where the format allows.
     pub keep_metadata: bool,
+    /// With `keep_metadata`: still remove the GPS location from the EXIF.
+    pub strip_location: bool,
     /// Keep all frames when both input and output can animate (GIF output).
     pub keep_animation: bool,
     pub recursive: bool,
@@ -100,6 +102,7 @@ impl ConvertOptions {
             rename: "{name}".into(),
             conflict: ConflictPolicy::Rename,
             keep_metadata: true,
+            strip_location: false,
             keep_animation: true,
             recursive: false,
             jobs: 0,
@@ -451,7 +454,14 @@ pub fn convert_one(job: &Job, opts: &ConvertOptions) -> Result<Outcome, String> 
     enc.lossless = opts.lossless;
     if opts.keep_metadata {
         if supports_exif(opts.format) {
-            enc.exif = decoded.exif.as_deref().map(metadata::exif_for_output);
+            enc.exif = decoded.exif.as_deref().map(|e| {
+                let e = metadata::exif_for_output(e);
+                if opts.strip_location {
+                    metadata::strip_gps(&e)
+                } else {
+                    e
+                }
+            });
         }
         enc.icc = decoded.icc.clone();
     }
@@ -478,6 +488,11 @@ fn repack_jpeg(job: &Job, opts: &ConvertOptions, in_bytes: u64) -> Result<Option
         return Ok(None);
     }
     if Format::from_path(&job.input) != Some(Format::Jpeg) {
+        return Ok(None);
+    }
+    // A lossless repack carries the JPEG's EXIF as it is: to remove the
+    // location the photo takes the normal path.
+    if opts.strip_location && opts.keep_metadata {
         return Ok(None);
     }
     let bytes = fs::read(&job.input).map_err(|e| format!("cannot read file: {e}"))?;

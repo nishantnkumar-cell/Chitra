@@ -62,6 +62,7 @@ CONVERT OPTIONS:
     -r, --recursive          Include sub-folders (mirrored under --out)
         --on-conflict MODE   rename (default), skip or overwrite
         --strip-metadata     Do not copy EXIF / colour profile
+  --strip-location     Keep the EXIF but remove the GPS location
         --no-animation       Write only the first frame of animated GIFs
     -j, --jobs N             Parallel workers (default: all cores)
         --dry-run            Show what would be written, change nothing
@@ -215,6 +216,7 @@ fn parse_convert(
             }
             Long("strip-metadata") => opts.keep_metadata = false,
             Long("keep-metadata") => opts.keep_metadata = true,
+            Long("strip-location") => opts.strip_location = true,
             Long("no-animation") => opts.keep_animation = false,
             Short('j') | Long("jobs") => opts.jobs = parser.value()?.parse()?,
             Long("dry-run") => dry_run = true,

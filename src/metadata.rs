@@ -25,6 +25,84 @@ pub fn exif_for_output(exif: &[u8]) -> Vec<u8> {
     out
 }
 
+/// A copy of an EXIF block (TIFF form) with its GPS directory blanked: the
+/// position, altitude, time and every other GPS value (and the bytes they point
+/// to) are zeroed, so the location is gone and not just hidden. The rest of the
+/// EXIF stays, and the block stays valid (the GPS directory is empty). A block
+/// that cannot be read is returned unchanged. Location can also sit in XMP or a
+/// camera's own MakerNote; those are not touched.
+pub fn strip_gps(exif: &[u8]) -> Vec<u8> {
+    let mut out = exif.to_vec();
+    let little = match out.get(..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return out,
+    };
+    let r16 = |b: &[u8], o: usize| -> Option<usize> {
+        let s = b.get(o..o.checked_add(2)?)?;
+        Some(usize::from(if little {
+            u16::from_le_bytes([s[0], s[1]])
+        } else {
+            u16::from_be_bytes([s[0], s[1]])
+        }))
+    };
+    let r32 = |b: &[u8], o: usize| -> Option<usize> {
+        let s = b.get(o..o.checked_add(4)?)?;
+        let v = if little {
+            u32::from_le_bytes([s[0], s[1], s[2], s[3]])
+        } else {
+            u32::from_be_bytes([s[0], s[1], s[2], s[3]])
+        };
+        usize::try_from(v).ok()
+    };
+    let size_of = |kind: usize| -> usize {
+        match kind {
+            3 | 8 => 2,
+            4 | 9 | 11 => 4,
+            5 | 10 | 12 => 8,
+            _ => 1,
+        }
+    };
+    let Some(ifd0) = r32(&out, 4) else { return out };
+    let Some(n0) = r16(&out, ifd0) else {
+        return out;
+    };
+    for i in 0..n0.min(512) {
+        let e = ifd0 + 2 + 12 * i;
+        if r16(&out, e) != Some(0x8825) {
+            continue;
+        }
+        let Some(gps) = r32(&out, e + 8) else {
+            continue;
+        };
+        let n = r16(&out, gps).unwrap_or(0).min(512);
+        let mut spans = Vec::new();
+        for j in 0..n {
+            let g = gps + 2 + 12 * j;
+            let (Some(kind), Some(count)) = (r16(&out, g + 2), r32(&out, g + 4)) else {
+                continue;
+            };
+            let size = size_of(kind).saturating_mul(count);
+            if size > 4
+                && let Some(at) = r32(&out, g + 8)
+                && let Some(end) = at.checked_add(size)
+                && end <= out.len()
+            {
+                spans.push((at, end));
+            }
+        }
+        // The values, then the directory itself (its count becomes 0).
+        for (a, b) in spans {
+            out[a..b].fill(0);
+        }
+        let end = (gps + 2 + 12 * n + 4).min(out.len());
+        if gps < end {
+            out[gps..end].fill(0);
+        }
+    }
+    out
+}
+
 /// Human-readable EXIF fields, in a stable order, for the info panel and `chitra info`.
 pub fn readable_fields(exif: &[u8]) -> Vec<(String, String)> {
     use exif::{In, Tag};
@@ -153,5 +231,76 @@ mod tests {
         assert_eq!(orientation(&reset), Orientation::NoTransforms);
         let fields = readable_fields(&exif);
         assert!(fields.iter().any(|(k, _)| k == "Orientation"));
+    }
+}
+
+#[cfg(test)]
+mod gps_tests {
+    use super::strip_gps;
+    use exif::experimental::Writer;
+    use exif::{Field, In, Rational, Tag, Value};
+
+    fn exif_with_location(little: bool) -> Vec<u8> {
+        let make = Field {
+            tag: Tag::Make,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![b"TestCam".to_vec()]),
+        };
+        let lat = Field {
+            tag: Tag::GPSLatitude,
+            ifd_num: In::PRIMARY,
+            value: Value::Rational(vec![
+                Rational { num: 12, denom: 1 },
+                Rational { num: 34, denom: 1 },
+                Rational {
+                    num: 5678,
+                    denom: 100,
+                },
+            ]),
+        };
+        let lat_ref = Field {
+            tag: Tag::GPSLatitudeRef,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![b"N".to_vec()]),
+        };
+        let mut w = Writer::new();
+        w.push_field(&make);
+        w.push_field(&lat);
+        w.push_field(&lat_ref);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        w.write(&mut buf, little).unwrap();
+        buf.into_inner()
+    }
+
+    #[test]
+    fn the_location_goes_and_the_rest_of_the_exif_stays() {
+        for little in [true, false] {
+            let original = exif_with_location(little);
+            let parsed = exif::Reader::new().read_raw(original.clone()).unwrap();
+            assert!(parsed.get_field(Tag::GPSLatitude, In::PRIMARY).is_some());
+            let needle: [u8; 4] = if little {
+                5678u32.to_le_bytes()
+            } else {
+                5678u32.to_be_bytes()
+            };
+            assert!(original.windows(4).any(|w| w == needle));
+
+            let clean = strip_gps(&original);
+            assert_eq!(clean.len(), original.len());
+            let parsed = exif::Reader::new()
+                .read_raw(clean.clone())
+                .expect("still valid");
+            assert!(parsed.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());
+            assert!(parsed.get_field(Tag::GPSLatitudeRef, In::PRIMARY).is_none());
+            assert!(
+                !clean.windows(4).any(|w| w == needle),
+                "the value bytes are zeroed"
+            );
+            let make = parsed.get_field(Tag::Make, In::PRIMARY).unwrap();
+            assert_eq!(make.display_value().to_string(), "\"TestCam\"");
+        }
+        // Not an EXIF block: unchanged.
+        assert_eq!(strip_gps(b"junk"), b"junk");
+        assert_eq!(strip_gps(b""), b"");
     }
 }
