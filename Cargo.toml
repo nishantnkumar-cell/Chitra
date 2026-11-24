@@ -21,7 +21,7 @@ zenwebp = { version = "0.4.4", optional = true }
 jxl-encoder = { version = "0.3.1", default-features = false, features = ["std", "parallel"], optional = true }
 zune-jpegxl = "0.5.2"
 zune-core = "0.5"
-eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "glow", "default_fonts", "wayland", "x11"] }
 rfd = "0.18.0"
 kamadak-exif = "0.6.1"
 fast_image_resize = { version = "6.1.0", features = ["image", "rayon"] }
