@@ -149,6 +149,65 @@ jobs:
             }
             Write-Host ("{0}: DllCharacteristics 0x{1:X4} ok" -f $exe, $dc)
           }
+      # The built exe, end to end, on Windows: every format decoded and encoded
+      # through the real binary (the unit tests run the library, not this).
+      - name: Run the built exe on every format
+        shell: pwsh
+        run: |
+          $d = "smoke"
+          New-Item -ItemType Directory $d | Out-Null
+          $fail = @()
+          function Step($what, [scriptblock]$run) {
+            & $run
+            if ($LASTEXITCODE -ne 0) { $script:fail += "$what (exit $LASTEXITCODE)" }
+          }
+          # Decode a sample of each hard format to PNG (still and animated).
+          foreach ($f in 'pattern.avif', 'pattern.heic', 'alpha.heic', 'exif.jxl', 'animated5.jxl') {
+            Step "decode $f" { ./chitra-cli.exe convert "tests/data/$f" --to png --out $d }
+          }
+          # Encode one picture into every writable format, then read each back.
+          $png = "$d/pattern.png"
+          foreach ($to in 'jpg', 'png', 'gif', 'bmp', 'webp', 'avif', 'jxl') {
+            Step "encode $to" { ./chitra-cli.exe convert $png --to $to --out "$d/$to" }
+            $out = Get-ChildItem "$d/$to" -Filter "pattern.*" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $out -or $out.Length -eq 0) { $fail += "no $to output"; continue }
+            Step "read $to back" { ./chitra-cli.exe info $out.FullName }
+          }
+          # Location removal, resizing and the AI model list through the exe.
+          Step "strip location" { ./chitra-cli.exe convert tests/data/exif.jxl --to jpg --strip-location --out "$d/strip" }
+          Step "resize" { ./chitra-cli.exe convert $png --to jpg --resize 50% --out "$d/resize" }
+          # 'list' exits 1 when no model is installed (by design, for scripts), so
+          # accept 0 or 1 and check the table is printed.
+          $models = ./chitra-cli.exe ai-model list
+          if ($LASTEXITCODE -gt 1 -or -not ($models -match 'best-2x')) { $fail += "ai-model list (exit $LASTEXITCODE)" }
+          # Updates and model downloads use the system's curl.exe.
+          Step "system curl" { & "$env:SystemRoot\System32\curl.exe" --version }
+          if ($fail.Count -gt 0) { throw ("failed: " + ($fail -join "; ")) }
+          Write-Host "all steps passed"
+      # Best effort, never blocking: start the window on a photo, make sure it
+      # stays up, and keep a screenshot so the interface can be looked at. The
+      # runner has no graphics card, so a missing OpenGL is possible.
+      - name: Start the app and take a screenshot
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $photo = (Resolve-Path "smoke/pattern.png").Path
+          $p = Start-Process -FilePath (Resolve-Path ./chitra.exe).Path -ArgumentList "`"$photo`"" -PassThru
+          Start-Sleep -Seconds 12
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("chitra-window.png")
+          if ($p.HasExited) { throw "chitra.exe exited by itself with code $($p.ExitCode)" }
+          Write-Host "the window stayed up for 12 s"
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: chitra-windows-screenshot
+          path: chitra-window.png
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: chitra-windows-x64
