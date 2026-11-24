@@ -141,9 +141,24 @@ pub struct JobResult {
 pub struct Report {
     pub results: Vec<JobResult>,
     pub elapsed: Duration,
+    /// Jobs that were never started because the batch was stopped, in their
+    /// original order. Empty when it ran to the end.
+    pub remaining: Vec<Job>,
 }
 
 impl Report {
+    /// This report followed by `later` (the run that carried on from where this
+    /// one was stopped): results in order, time added up, and only what `later`
+    /// still has left.
+    pub fn merged(mut self, later: Report) -> Report {
+        self.results.extend(later.results);
+        Report {
+            results: self.results,
+            elapsed: self.elapsed + later.elapsed,
+            remaining: later.remaining,
+        }
+    }
+
     pub fn converted(&self) -> usize {
         self.results
             .iter()
@@ -372,9 +387,115 @@ pub fn plan(roots: &[PathBuf], opts: &ConvertOptions) -> Vec<Job> {
     jobs
 }
 
+/// What a batch is told to do next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    Running,
+    /// No new file starts; the ones being converted finish.
+    Paused,
+    /// No new file starts, and the batch ends with the rest handed back.
+    Stopped,
+}
+
+/// Pause, resume or stop a batch that is running (from another thread).
+///
+/// The gate is before each file: a file being converted always finishes, so no
+/// output is half written, and a file is either done or handed back untouched,
+/// never both and never lost. A stopped batch returns the jobs it did not start
+/// in [`Report::remaining`]; running those continues exactly where it left off.
+#[derive(Debug)]
+pub struct Control {
+    state: std::sync::Mutex<State>,
+    changed: std::sync::Condvar,
+    active: std::sync::atomic::AtomicUsize,
+}
+
+impl Default for Control {
+    fn default() -> Self {
+        Control::new()
+    }
+}
+
+impl Control {
+    pub fn new() -> Control {
+        Control {
+            state: std::sync::Mutex::new(State::Running),
+            changed: std::sync::Condvar::new(),
+            active: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn set(&self, to: State) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // A stopped batch stays stopped.
+        if *s != State::Stopped {
+            *s = to;
+        }
+        self.changed.notify_all();
+    }
+
+    pub fn pause(&self) {
+        self.set(State::Paused);
+    }
+
+    pub fn resume(&self) {
+        self.set(State::Running);
+    }
+
+    pub fn stop(&self) {
+        self.set(State::Stopped);
+    }
+
+    pub fn state(&self) -> State {
+        *self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Files being converted right now (they finish even when paused).
+    pub fn active(&self) -> usize {
+        self.active.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Waits while paused; false once stopped (the file must not start).
+    fn gate(&self) -> bool {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        while *s == State::Paused {
+            s = self.changed.wait(s).unwrap_or_else(|e| e.into_inner());
+        }
+        *s != State::Stopped
+    }
+}
+
+/// Counts a file as being converted for as long as it lives.
+struct Active<'a>(&'a Control);
+
+impl<'a> Active<'a> {
+    fn new(c: &'a Control) -> Self {
+        c.active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Active(c)
+    }
+}
+
+impl Drop for Active<'_> {
+    fn drop(&mut self) {
+        self.0
+            .active
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Convert every job in parallel. `progress` is called once per finished job,
 /// from worker threads.
 pub fn run<F>(jobs: Vec<Job>, opts: &ConvertOptions, progress: F) -> Report
+where
+    F: Fn(&JobResult) + Sync,
+{
+    run_with(jobs, opts, &Control::new(), progress)
+}
+
+/// [`run`] that can be paused, resumed and stopped through `control`. When it
+/// is stopped, [`Report::remaining`] holds the jobs that were not started, in
+/// their original order, for a later `run_with` to carry on from.
+pub fn run_with<F>(jobs: Vec<Job>, opts: &ConvertOptions, control: &Control, progress: F) -> Report
 where
     F: Fn(&JobResult) + Sync,
 {
@@ -384,7 +505,11 @@ where
     } else {
         opts.jobs
     };
-    let one = |job: Job| {
+    let one = |(i, job): (usize, Job)| -> (usize, Result<JobResult, Job>) {
+        if !control.gate() {
+            return (i, Err(job));
+        }
+        let _active = Active::new(control);
         let t = Instant::now();
         let outcome = match &job.skip {
             Some(reason) => Outcome::Skipped(reason.clone()),
@@ -396,7 +521,7 @@ where
             elapsed: t.elapsed(),
         };
         progress(&result);
-        result
+        (i, Ok(result))
     };
     // Upscaled photos are large (a 4x copy is 16 times the pixels) and the
     // upscaler is itself multithreaded, so take them a couple at a time.
@@ -408,20 +533,29 @@ where
     };
     let work = || {
         let mut results = Vec::with_capacity(jobs.len());
-        let mut queue = jobs.into_iter().peekable();
+        let mut queue = jobs.into_iter().enumerate().peekable();
         while queue.peek().is_some() {
-            let round: Vec<Job> = queue.by_ref().take(per_round).collect();
+            let round: Vec<(usize, Job)> = queue.by_ref().take(per_round).collect();
             results.extend(round.into_par_iter().map(one).collect::<Vec<_>>());
         }
         results
     };
-    let results = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
+    let all = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
         Ok(pool) => pool.install(work),
         Err(_) => work(),
     };
+    let mut done = Vec::new();
+    let mut remaining = Vec::new();
+    for (_, r) in all {
+        match r {
+            Ok(result) => done.push(result),
+            Err(job) => remaining.push(job),
+        }
+    }
     Report {
-        results,
+        results: done,
         elapsed: start.elapsed(),
+        remaining,
     }
 }
 
@@ -590,6 +724,93 @@ mod tests {
             "_evil_IMG_0042"
         );
         assert_eq!(render_name("", p, 1, Format::Png), "IMG_0042");
+    }
+
+    fn png_jobs(dir: &Path, n: usize) -> (ConvertOptions, Vec<Job>) {
+        let src = dir.join("in");
+        fs::create_dir_all(&src).unwrap();
+        for i in 0..n {
+            image::RgbImage::from_pixel(8, 8, image::Rgb([i as u8, 1, 2]))
+                .save(src.join(format!("p{i:02}.png")))
+                .unwrap();
+        }
+        let mut opts = ConvertOptions::new(Format::Jpeg);
+        opts.out_dir = Some(dir.join("out"));
+        // One at a time so what has been done when it stops is exact.
+        opts.jobs = 1;
+        let jobs = plan(&[src], &opts);
+        assert_eq!(jobs.len(), n);
+        (opts, jobs)
+    }
+
+    #[test]
+    fn a_stopped_batch_hands_back_exactly_what_it_did_not_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (opts, jobs) = png_jobs(dir.path(), 12);
+        let all: Vec<PathBuf> = jobs.iter().map(|j| j.output.clone()).collect();
+        let control = Control::new();
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        let first = run_with(jobs, &opts, &control, |_| {
+            if done.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == 5 {
+                control.stop();
+            }
+        });
+        // The five finished are done, the other seven are untouched and in order.
+        assert_eq!(first.results.len(), 5);
+        assert_eq!(first.remaining.len(), 7);
+        assert_eq!(first.remaining[0].output, all[5]);
+        assert!(all[..5].iter().all(|p| p.exists()));
+        assert!(all[5..].iter().all(|p| !p.exists()));
+
+        // Carrying on from there does the rest, once each.
+        let second = run_with(first.remaining.clone(), &opts, &Control::new(), |_| {});
+        assert!(second.remaining.is_empty());
+        let whole = first.merged(second);
+        assert_eq!(whole.results.len(), 12);
+        assert_eq!(whole.converted(), 12);
+        assert!(all.iter().all(|p| p.exists()));
+        let inputs: Vec<_> = whole.results.iter().map(|r| r.job.input.clone()).collect();
+        let mut sorted = inputs.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 12, "no file twice, none missing");
+    }
+
+    #[test]
+    fn a_paused_batch_starts_nothing_until_resumed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (opts, jobs) = png_jobs(dir.path(), 6);
+        let control = Control::new();
+        control.pause();
+        let started = std::sync::atomic::AtomicUsize::new(0);
+        let report = std::thread::scope(|s| {
+            let h = s.spawn(|| {
+                run_with(jobs, &opts, &control, |_| {
+                    started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                })
+            });
+            std::thread::sleep(Duration::from_millis(300));
+            assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(control.state(), State::Paused);
+            control.resume();
+            h.join().unwrap()
+        });
+        assert_eq!(report.converted(), 6);
+        assert!(report.remaining.is_empty());
+        // A stop wakes a batch that is paused, and nothing starts.
+        let (opts, jobs) = png_jobs(&dir.path().join("again"), 4);
+        let control = Control::new();
+        control.pause();
+        let report = std::thread::scope(|s| {
+            let h = s.spawn(|| run_with(jobs, &opts, &control, |_| {}));
+            std::thread::sleep(Duration::from_millis(100));
+            control.stop();
+            h.join().unwrap()
+        });
+        assert_eq!((report.results.len(), report.remaining.len()), (0, 4));
+        // Once stopped it stays stopped.
+        control.resume();
+        assert_eq!(control.state(), State::Stopped);
     }
 
     #[test]

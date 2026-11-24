@@ -238,6 +238,23 @@ chitra-cli info photo.jpg
 Run `chitra-cli convert --help` for every option. Exit codes: `0` all
 converted, `1` some files failed or none were found, `2` invalid options.
 
+### Pause, stop and continue
+
+While a batch runs (in Convert and in Upscale and sharpen) the progress bar has
+**Pause** and **Stop** beside it.
+
+- **Pause** stops starting new files. The files being converted finish first,
+  so nothing is half written; the bar says "pausing" and then "paused".
+  **Resume** carries on with the next file.
+- **Stop** also lets the files being converted finish, then ends the batch and
+  shows how many are done and how many are left. **Continue** carries on with
+  exactly the files that had not been started, in the same order and with the
+  same settings; **Discard the rest** leaves them as they are.
+
+Stopping and continuing works while the window is open. If you quit Chitra, the
+list of what is left is gone: start again with "If the file exists: Skip" and the
+photos already converted are passed over.
+
 ## Upscale and sharpen
 
 **Enhance** in the toolbar (outlined, always available; or `Ctrl+E`, or
