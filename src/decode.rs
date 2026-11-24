@@ -238,7 +238,11 @@ fn decode_heif(data: &[u8]) -> Result<Decoded, DecodeError> {
 /// Alpha, grids and the crop, rotation and mirror boxes are applied by the
 /// crate; higher bit depths are reduced to 8 bits.
 fn decode_avif(data: &[u8]) -> Result<Decoded, DecodeError> {
-    let avif = oxideav_avif::decode(data).map_err(|e| DecodeError::Invalid(e.to_string()))?;
+    // The decoder can spread tiles over several threads; by default it uses one.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let options = oxideav_avif::DecodeOptions::default().with_threads(Some(threads));
+    let avif = oxideav_avif::decode_with(data, &options)
+        .map_err(|e| DecodeError::Invalid(e.to_string()))?;
     let (w, h) = (avif.width(), avif.height());
     if u64::from(w) * u64::from(h) * 4 > MAX_ALLOC {
         return Err(DecodeError::Invalid("image too large".into()));
