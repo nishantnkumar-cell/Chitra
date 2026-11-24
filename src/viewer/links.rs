@@ -7,11 +7,15 @@
 //! the sandbox that needs no extra permission), elsewhere, or if the portal
 //! is not there, through the system's opener (`xdg-open`, `open`, ...).
 
+#[cfg(target_os = "linux")]
 use std::io;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
+#[cfg(target_os = "linux")]
 use super::dbus::{Conn, PORTAL, PORTAL_PATH, Writer, session_bus_path};
 
+#[cfg(target_os = "linux")]
 const OPEN_URI: &str = "org.freedesktop.portal.OpenURI";
 
 /// Only web pages (and `mailto:`) are opened from here, never a file or
@@ -22,10 +26,12 @@ pub fn is_openable(url: &str) -> bool {
         && (u.starts_with("https://") || u.starts_with("http://") || u.starts_with("mailto:"))
 }
 
+#[cfg(target_os = "linux")]
 fn in_flatpak() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").exists()
 }
 
+#[cfg(target_os = "linux")]
 /// The arguments of `OpenURI(parent_window: s, uri: s, options: a{sv})`.
 fn open_uri_body(url: &str) -> Vec<u8> {
     let mut w = Writer::default();
@@ -36,6 +42,7 @@ fn open_uri_body(url: &str) -> Vec<u8> {
 }
 
 /// Ask the desktop portal to open `url` in the user's browser.
+#[cfg(target_os = "linux")]
 fn portal_open(url: &str) -> io::Result<()> {
     let path = session_bus_path().ok_or_else(|| io::Error::other("no session bus"))?;
     let mut bus = Conn::connect(&path)?;
@@ -62,7 +69,8 @@ pub fn open(url: &str) {
     }
     let url = url.trim().to_owned();
     std::thread::spawn(move || {
-        if cfg!(target_os = "linux") && in_flatpak() {
+        #[cfg(target_os = "linux")]
+        if in_flatpak() {
             match portal_open(&url) {
                 Ok(()) => return,
                 Err(e) => eprintln!("the desktop portal could not open {url}: {e}"),
@@ -78,6 +86,7 @@ pub fn open(url: &str) {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn open_uri_arguments_are_encoded_as_ssa_sv() {
         let url = "https://example.com/a";
