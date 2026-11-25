@@ -106,11 +106,12 @@ fn mutated_images_never_panic_a_decoder() {
         guard(&mut failures, &format!("{name} (unmutated)"), || {
             fuzzing::decode_as(&seed, format)
         });
-        // The slow decoders get fewer tries.
-        let tries = if matches!(format, Format::Avif | Format::Heif) {
-            10
-        } else {
-            40
+        // The slow decoder gets fewer tries. HEIF gets many: with only 10, a
+        // decoder release that crashed on one damaged file in 17 passed by luck.
+        let tries = match format {
+            Format::Avif => 10,
+            Format::Heif => 150,
+            _ => 40,
         };
         for i in 0..tries {
             let data = mutate(&mut rng, &seed);
