@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # 0.7.x panics on damaged files; see the note in Cargo.toml.
+      - dependency-name: "heifer*"
+        versions: [">=0.7.0, <=0.7.1"]
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: monthly
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

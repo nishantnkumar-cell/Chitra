@@ -227,10 +227,19 @@ pub fn download(pkg: &Package, dir: &Path) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
+/// The system's own `rundll32.exe`, by full path (as for `curl`), so a program
+/// of that name next to Chitra or elsewhere on the search path is not run instead.
+fn rundll32() -> PathBuf {
+    std::env::var_os("SystemRoot")
+        .map(|r| PathBuf::from(r).join("System32").join("rundll32.exe"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| "rundll32".into())
+}
+
 /// Open a web page or folder with the system's default handler.
 pub fn open(target: &str) -> Result<(), String> {
     let mut cmd = if cfg!(windows) {
-        let mut c = std::process::Command::new("rundll32");
+        let mut c = std::process::Command::new(rundll32());
         c.arg("url.dll,FileProtocolHandler");
         c
     } else if cfg!(target_os = "macos") {
