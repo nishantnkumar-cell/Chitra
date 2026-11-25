@@ -202,13 +202,13 @@ jobs:
           if ($p.HasExited) { throw "chitra.exe exited by itself with code $($p.ExitCode)" }
           Write-Host "the window stayed up for 12 s"
           Stop-Process -Id $p.Id -Force
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: chitra-windows-screenshot
           path: chitra-window.png
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chitra-windows-x64
           path: |
@@ -256,7 +256,7 @@ jobs:
           if (Test-Path 'HKCU:\Software\Classes\Chitra.Image') { throw "uninstall left the ProgId behind" }
           if (Test-Path 'HKCU:\Software\Classes\Chitra.Video') { throw "uninstall left the video ProgId behind" }
           Write-Host "Installer installs, registers and uninstalls cleanly"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chitra-windows-installer
           path: dist/Chitra-Setup-*.exe
@@ -325,7 +325,7 @@ jobs:
           test -s t/flatpak/pattern.png
           dbus-run-session -- flatpak run --command=chitra io.github.nishantnkumar_cell.Chitra \
             --play-test "$PWD/tests/data/h264-aac.mp4"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chitra-linux-x86_64
           path: |
